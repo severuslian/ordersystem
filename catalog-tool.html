@@ -299,13 +299,27 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
             <div class="form-group"><label class="form-label">庫存警戒數量 <span style="font-size:10px;color:var(--hint);">低於此值標記不足</span></label><input class="form-input" id="set-threshold" type="number" min="0" value="10" style="width:100px;"></div>
           </div>
           <div style="font-size:11px;color:var(--hint);margin-top:8px;">⚠ 登入代碼留空則沿用現有代碼；後台密碼留空則不修改</div>
-          <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-            <button class="btn btn-sm" onclick="downloadBackup()">⬇ 手動備份 JSON</button>
-            <label class="btn btn-sm" style="cursor:pointer;">
-              ⬆ 從備份還原
-              <input type="file" accept=".json" style="display:none;" onchange="restoreBackup(this.files[0])">
-            </label>
-            <span style="font-size:11px;color:var(--hint);">自動備份：每 6 天開啟系統時自動下載</span>
+          <div style="margin-top:16px;padding:14px 16px;background:var(--surface2);border-radius:var(--rs);border:1px solid var(--border);">
+            <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:10px;">☁️ 雲端同步 & 資料備份</div>
+            <div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:12px;">
+              <div>
+                <div style="font-size:10px;color:var(--hint);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;">最近雲端刷新</div>
+                <div id="last-ping-display" style="font-size:12px;font-weight:500;color:var(--text);">—</div>
+              </div>
+              <div>
+                <div style="font-size:10px;color:var(--hint);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;">最近自動備份</div>
+                <div id="last-backup-display" style="font-size:12px;font-weight:500;color:var(--text);">—</div>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+              <button class="btn btn-sm" onclick="downloadBackup()">⬇ 手動備份 JSON</button>
+              <label class="btn btn-sm" style="cursor:pointer;">
+                ⬆ 從備份還原
+                <input type="file" accept=".json" style="display:none;" onchange="restoreBackup(this.files[0])">
+              </label>
+              <button class="btn btn-sm" onclick="loadFromSupabase().then(()=>{renderProducts();renderSettingsForms();updateSyncStatus();alert('✅ 已從雲端重新同步！')})">🔄 立即同步雲端</button>
+            </div>
+            <div style="font-size:11px;color:var(--hint);margin-top:8px;">自動每 5 天 ping 雲端防暫停・每 6 天自動下載備份</div>
           </div>
         </div>
         <div class="settings-section">
@@ -588,6 +602,25 @@ async function sbFetch(method, table, body=null, query=''){
 }
 
 // ── AUTO PING (keep Supabase alive every 5 days) ──
+function updateSyncStatus(){
+  const PING_KEY = 'sl_last_ping';
+  const BACKUP_KEY = 'sl_last_backup';
+  const pingEl = document.getElementById('last-ping-display');
+  const backupEl = document.getElementById('last-backup-display');
+  function fmt(ts){
+    if(!ts||ts==='0') return '尚未記錄';
+    const d = new Date(parseInt(ts));
+    const diff = Date.now()-parseInt(ts);
+    const days = Math.floor(diff/86400000);
+    const hours = Math.floor(diff/3600000);
+    const mins = Math.floor(diff/60000);
+    let ago = mins<1?'剛剛':mins<60?`${mins} 分鐘前`:hours<24?`${hours} 小時前`:`${days} 天前`;
+    return `${d.toLocaleDateString('zh-TW')} ${d.toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'})} (${ago})`;
+  }
+  if(pingEl) pingEl.textContent = fmt(localStorage.getItem(PING_KEY));
+  if(backupEl) backupEl.textContent = fmt(localStorage.getItem(BACKUP_KEY));
+}
+
 function setupAutoPing(){
   const PING_KEY = 'sl_last_ping';
   const FIVE_DAYS = 5 * 24 * 60 * 60 * 1000;
@@ -595,6 +628,7 @@ function setupAutoPing(){
     try {
       await sbFetch('GET','sl_settings','','?id=eq.1&limit=1');
       localStorage.setItem(PING_KEY, Date.now().toString());
+      updateSyncStatus();
       console.log('Supabase ping OK:', new Date().toLocaleString());
     } catch(e){ console.warn('Ping failed:', e); }
   }
@@ -623,6 +657,7 @@ function setupAutoBackup(){
       a.click();
       URL.revokeObjectURL(a.href);
       localStorage.setItem(BACKUP_KEY, Date.now().toString());
+      updateSyncStatus();
       console.log('Auto backup done');
     } catch(e){ console.warn('Auto backup failed:', e); }
   }
@@ -647,6 +682,8 @@ function downloadBackup(){
   a.download = `SL_backup_${new Date().toLocaleDateString('en-CA')}.json`;
   a.click();
   URL.revokeObjectURL(a.href);
+  localStorage.setItem('sl_last_backup', Date.now().toString());
+  updateSyncStatus();
 }
 async function restoreBackup(file){
   try {
@@ -868,7 +905,7 @@ function showPage(page,el){
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   document.getElementById('sup-page-'+page).classList.add('active');
   if(el) el.classList.add('active');
-  if(page==='settings'){renderSettingsForms(); document.getElementById('set-brand').value=settings.brand||''; document.getElementById('set-supplier-code').placeholder=settings.supplierCode?`目前：${settings.supplierCode}`:'例：SUP2025'; const th=document.getElementById('set-threshold'); if(th) th.value=settings.stockThreshold||10;}
+  if(page==='settings'){renderSettingsForms(); document.getElementById('set-brand').value=settings.brand||''; document.getElementById('set-supplier-code').placeholder=settings.supplierCode?`目前：${settings.supplierCode}`:'例：SUP2025'; const th=document.getElementById('set-threshold'); if(th) th.value=settings.stockThreshold||10; updateSyncStatus();}
   if(page==='export'){populateExportSelects(); renderCatalog();}
   if(page==='categories'){renderCategoryManagePage();}
 }
