@@ -299,6 +299,14 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
             <div class="form-group"><label class="form-label">庫存警戒數量 <span style="font-size:10px;color:var(--hint);">低於此值標記不足</span></label><input class="form-input" id="set-threshold" type="number" min="0" value="10" style="width:100px;"></div>
           </div>
           <div style="font-size:11px;color:var(--hint);margin-top:8px;">⚠ 登入代碼留空則沿用現有代碼；後台密碼留空則不修改</div>
+          <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            <button class="btn btn-sm" onclick="downloadBackup()">⬇ 手動備份 JSON</button>
+            <label class="btn btn-sm" style="cursor:pointer;">
+              ⬆ 從備份還原
+              <input type="file" accept=".json" style="display:none;" onchange="restoreBackup(this.files[0])">
+            </label>
+            <span style="font-size:11px;color:var(--hint);">自動備份：每 6 天開啟系統時自動下載</span>
+          </div>
         </div>
         <div class="settings-section">
           <div class="settings-title">🌍 國家匯率設定</div>
@@ -577,6 +585,82 @@ async function sbFetch(method, table, body=null, query=''){
   if(!r.ok){ const t=await r.text(); console.error('SB error',r.status,t); return null; }
   if(r.status===204) return true;
   return r.json();
+}
+
+// ── AUTO PING (keep Supabase alive every 5 days) ──
+function setupAutoPing(){
+  const PING_KEY = 'sl_last_ping';
+  const FIVE_DAYS = 5 * 24 * 60 * 60 * 1000;
+  async function ping(){
+    try {
+      await sbFetch('GET','sl_settings','','?id=eq.1&limit=1');
+      localStorage.setItem(PING_KEY, Date.now().toString());
+      console.log('Supabase ping OK:', new Date().toLocaleString());
+    } catch(e){ console.warn('Ping failed:', e); }
+  }
+  // Check if we need to ping now
+  const last = parseInt(localStorage.getItem(PING_KEY)||'0');
+  if(Date.now() - last > FIVE_DAYS) ping();
+  // Then ping every 5 days
+  setInterval(ping, FIVE_DAYS);
+}
+
+// ── AUTO BACKUP (every 6 days, download JSON) ──
+function setupAutoBackup(){
+  const BACKUP_KEY = 'sl_last_backup';
+  const SIX_DAYS = 6 * 24 * 60 * 60 * 1000;
+  function doBackup(){
+    try {
+      const backup = {
+        version: 5,
+        date: new Date().toISOString(),
+        products, settings, categories
+      };
+      const blob = new Blob([JSON.stringify(backup, null, 2)], {type:'application/json'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `SL_backup_${new Date().toLocaleDateString('en-CA')}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      localStorage.setItem(BACKUP_KEY, Date.now().toString());
+      console.log('Auto backup done');
+    } catch(e){ console.warn('Auto backup failed:', e); }
+  }
+  const last = parseInt(localStorage.getItem(BACKUP_KEY)||'0');
+  if(Date.now() - last > SIX_DAYS){
+    // Wait 3 seconds after load then backup
+    setTimeout(doBackup, 3000);
+  }
+  setInterval(doBackup, SIX_DAYS);
+}
+
+// ── MANUAL BACKUP & RESTORE ──
+function downloadBackup(){
+  const backup = {
+    version: 5,
+    date: new Date().toISOString(),
+    products, settings, categories
+  };
+  const blob = new Blob([JSON.stringify(backup, null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `SL_backup_${new Date().toLocaleDateString('en-CA')}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+async function restoreBackup(file){
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    if(!data.products) { alert('備份檔案格式不正確'); return; }
+    if(!confirm(`確定要從備份還原？\n備份日期：${data.date}\n商品數：${data.products.length}\n\n⚠️ 這會覆蓋目前所有資料！`)) return;
+    products = data.products;
+    if(data.settings) settings = data.settings;
+    if(data.categories) categories = data.categories;
+    await persist();
+    renderProducts();
+    alert('✅ 還原成功！');
+  } catch(e){ alert('還原失敗：' + e.message); }
 }
 
 // ── STATE (synced from Supabase, fallback to localStorage) ──
@@ -2209,6 +2293,8 @@ function x(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').re
     renderProducts();
   }
   document.getElementById('gate').style.display = 'flex';
+  setupAutoPing();
+  setupAutoBackup();
 })();
 </script>
 <script>
