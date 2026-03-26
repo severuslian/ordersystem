@@ -585,20 +585,23 @@ const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 
 async function sbFetch(method, table, body=null, query=''){
   const url = `${SB_URL}/rest/v1/${table}${query}`;
-  const opts = {
-    method,
-    headers: {
-      'apikey': SB_KEY,
-      'Authorization': `Bearer ${SB_KEY}`,
-      'Content-Type': 'application/json',
-      'Prefer': method==='POST'?'resolution=merge-duplicates':'',
-    },
+  const headers = {
+    'apikey': SB_KEY,
+    'Authorization': `Bearer ${SB_KEY}`,
+    'Content-Type': 'application/json',
   };
+  // For upsert (POST), tell Supabase to merge on conflict
+  if(method==='POST') headers['Prefer'] = 'resolution=merge-duplicates,return=minimal';
+  if(method==='DELETE') headers['Prefer'] = 'return=minimal';
+  const opts = { method, headers };
   if(body) opts.body = JSON.stringify(body);
-  const r = await fetch(url, opts);
-  if(!r.ok){ const t=await r.text(); console.error('SB error',r.status,t); return null; }
-  if(r.status===204) return true;
-  return r.json();
+  try {
+    const r = await fetch(url, opts);
+    if(!r.ok){ const t=await r.text(); console.error('SB error',r.status,t,url); return null; }
+    if(r.status===204||r.status===201) return true;
+    const txt=await r.text();
+    return txt?JSON.parse(txt):true;
+  } catch(e){ console.error('SB fetch error:',e); return null; }
 }
 
 // ── AUTO PING (keep Supabase alive every 5 days) ──
@@ -774,7 +777,7 @@ async function persist(){
     // Save categories
     if(categories.length){
       // delete removed ones
-      await sbFetch('DELETE','sl_categories','','?id=gt.0');
+      await sbFetch('DELETE','sl_categories','','?sort_order=gte.0');
       const catRows = categories.map((name,i)=>({name, sort_order:i}));
       await sbFetch('POST','sl_categories',catRows,'');
     }
@@ -1191,7 +1194,7 @@ function handleImg(ev){
     document.getElementById('img-ph').style.display='none';
   }; r.readAsDataURL(f);
 }
-function saveProduct(){
+async function saveProduct(){
   const name=document.getElementById('p-name').value.trim();
   if(!name){alert('請輸入商品名稱');return;}
 
@@ -1227,7 +1230,10 @@ function saveProduct(){
     stockLow: document.getElementById('p-stock-override').checked || false};
   if(editingId) products[products.findIndex(p=>p.id===editingId)]=d;
   else products.push(d);
-  persist(); closePModal(); renderProducts();
+  const saved=await persist();
+  closePModal();
+  renderProducts();
+  showToast('✅ 商品已儲存並同步到雲端');
 }
 async function delProduct(id){
   if(!confirm('確定刪除？'))return;
@@ -2314,6 +2320,21 @@ function setLang(lang){
 }
 
 // ── UTIL ──
+function showToast(msg, isErr=false){
+  let t=document.getElementById('toast-msg');
+  if(!t){
+    t=document.createElement('div');
+    t.id='toast-msg';
+    t.style.cssText='position:fixed;bottom:80px;left:50%;transform:translateX(-50%);padding:10px 20px;border-radius:20px;font-size:13px;font-weight:500;z-index:9999;transition:opacity .3s;box-shadow:0 4px 12px rgba(0,0,0,.15);font-family:var(--font);';
+    document.body.appendChild(t);
+  }
+  t.textContent=msg;
+  t.style.background=isErr?'#B85450':'#5C8A5A';
+  t.style.color='#fff';
+  t.style.opacity='1';
+  clearTimeout(t._timer);
+  t._timer=setTimeout(()=>t.style.opacity='0',3000);
+}
 function x(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
 // init - load from Supabase then render
