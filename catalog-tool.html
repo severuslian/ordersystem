@@ -598,9 +598,10 @@ async function sbFetch(method, table, body=null, query=''){
   try {
     const r = await fetch(url, opts);
     if(!r.ok){ const t=await r.text(); console.error('SB error',r.status,t,url); return null; }
-    if(r.status===204||r.status===201) return true;
+    if(r.status===204||r.status===201||r.status===200&&method!=='GET') return true;
     const txt=await r.text();
-    return txt?JSON.parse(txt):true;
+    if(!txt||txt.trim()==='') return true;
+    try{ return JSON.parse(txt); }catch(e){ return true; }
   } catch(e){ console.error('SB fetch error:',e); return null; }
 }
 
@@ -733,17 +734,21 @@ let dragSrcId=null;
 
 // ── SUPABASE SYNC ──
 async function persist(){
-  // Also save to localStorage as offline cache
+  // Save to localStorage first
   localStorage.setItem('cp_products', JSON.stringify(products));
   localStorage.setItem('cp_settings', JSON.stringify(settings));
   localStorage.setItem('cp_categories', JSON.stringify(categories));
-  // Sync to Supabase in background
+
+  // Sync to Supabase
+  let ok = true;
   try {
-    // Save products
+    console.log('[SB] Starting sync...', products.length, 'products');
+
+    // Save products one by one to avoid payload size issues
     if(products.length){
       const rows = products.map((p,i)=>({
-        id: p.id,
-        name: p.name,
+        id: String(p.id),
+        name: p.name||'',
         name_en: p.nameEn||null,
         barcode: p.barcode||null,
         price: parseFloat(p.price)||0,
@@ -761,10 +766,17 @@ async function persist(){
         sort_order: i,
         updated_at: new Date().toISOString(),
       }));
-      await sbFetch('POST','sl_products',rows,'');
+      // Send in batches of 20 to avoid size limits
+      for(let i=0;i<rows.length;i+=20){
+        const batch=rows.slice(i,i+20);
+        const r=await sbFetch('POST','sl_products',batch,'');
+        if(r===null){ ok=false; console.error('[SB] Products batch failed at',i); }
+      }
+      console.log('[SB] Products saved:', ok);
     }
-    // Save settings (upsert row id=1)
-    await sbFetch('POST','sl_settings',[{
+
+    // Save settings
+    const sr=await sbFetch('POST','sl_settings',[{
       id: 1,
       admin_pwd: settings.adminPwd,
       supplier_code: settings.supplierCode||null,
@@ -774,14 +786,27 @@ async function persist(){
       channels: settings.channels,
       updated_at: new Date().toISOString(),
     }],'');
+    if(sr===null){ ok=false; console.error('[SB] Settings save failed'); }
+    else console.log('[SB] Settings saved');
+
     // Save categories
     if(categories.length){
-      // delete removed ones
       await sbFetch('DELETE','sl_categories','','?sort_order=gte.0');
-      const catRows = categories.map((name,i)=>({name, sort_order:i}));
-      await sbFetch('POST','sl_categories',catRows,'');
+      const catRows=categories.map((name,i)=>({name,sort_order:i}));
+      const cr=await sbFetch('POST','sl_categories',catRows,'');
+      if(cr===null){ ok=false; console.error('[SB] Categories save failed'); }
+      else console.log('[SB] Categories saved');
     }
-  } catch(e){ console.warn('Supabase sync failed, saved locally:', e); }
+
+    console.log('[SB] Sync complete, ok=',ok);
+    if(!ok) showToast('⚠️ 部分資料未能同步雲端', true);
+
+  } catch(e){
+    ok=false;
+    console.error('[SB] Sync error:', e);
+    showToast('❌ 雲端同步失敗，已儲存本機', true);
+  }
+  return ok;
 }
 
 async function loadFromSupabase(){
