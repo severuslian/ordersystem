@@ -271,7 +271,10 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     <!-- products page -->
     <div id="sup-page-products" class="page active">
       <div class="topbar"><div class="topbar-title">商品清單</div>
-        <div class="topbar-actions"><button class="btn btn-primary" onclick="openPModal()">＋ 新增商品</button></div></div>
+        <div class="topbar-actions">
+          <button class="btn" onclick="loadFromSupabase().then(()=>{renderProducts();renderSettingsForms();})" title="從雲端重新載入">🔄 同步</button>
+          <button class="btn btn-primary" onclick="openPModal()">＋ 新增商品</button>
+        </div></div>
       <div class="content">
         <div class="stats-bar" id="stats-bar"></div>
         <div class="toolbar"><input class="search-box" type="text" placeholder="搜尋名稱、條碼…" id="search-input" oninput="renderProducts()"></div>
@@ -554,24 +557,32 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
   <div id="pdf-print-area"></div>
 </div>
 <script>
-// ── STATE ──
-// Version check - clear incompatible old data
-(function(){
-  try {
-    const v = localStorage.getItem('cp_version');
-    if(v !== '5') {
-      // Migrate: keep products if they exist, reset settings to defaults
-      const oldProds = localStorage.getItem('cp_products');
-      if(oldProds) localStorage.setItem('cp_products_bak', oldProds);
-      localStorage.removeItem('cp_settings');
-      localStorage.setItem('cp_version','5');
-    }
-  } catch(e) {}
-})();
+// ── SUPABASE CONFIG ──
+const SB_URL = 'https://njurnphljfwamntqsldw.supabase.co';
+const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5qdXJucGhsamZ3YW1udHFzbGR3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ1MTE5NzcsImV4cCI6MjA5MDA4Nzk3N30.TkxvkUiVpAMvHzyaLa-ejM-pbqNb36xJkciCWjjM7ZQ';
 
-let products = JSON.parse(localStorage.getItem('cp_products')||'[]');
-let categories = JSON.parse(localStorage.getItem('cp_categories')||'null') || ['紙膠帶','明信片','貼紙','其他'];
-let settings = JSON.parse(localStorage.getItem('cp_settings')||'null') || {
+async function sbFetch(method, table, body=null, query=''){
+  const url = `${SB_URL}/rest/v1/${table}${query}`;
+  const opts = {
+    method,
+    headers: {
+      'apikey': SB_KEY,
+      'Authorization': `Bearer ${SB_KEY}`,
+      'Content-Type': 'application/json',
+      'Prefer': method==='POST'?'resolution=merge-duplicates':'',
+    },
+  };
+  if(body) opts.body = JSON.stringify(body);
+  const r = await fetch(url, opts);
+  if(!r.ok){ const t=await r.text(); console.error('SB error',r.status,t); return null; }
+  if(r.status===204) return true;
+  return r.json();
+}
+
+// ── STATE (synced from Supabase, fallback to localStorage) ──
+let products = [];
+let categories = ['紙膠帶','明信片','貼紙','其他'];
+let settings = {
   adminPwd:'admin123', brand:'', stockThreshold:10,
   currencies:[
     {name:'台灣',code:'TWD',rate:1},
@@ -596,10 +607,125 @@ let currentCats=[];   // tags being edited in modal
 let activeCatFilter=''; // '' = all
 let dragSrcId=null;
 
-function persist(){
-  localStorage.setItem('cp_products',JSON.stringify(products));
-  localStorage.setItem('cp_settings',JSON.stringify(settings));
-  localStorage.setItem('cp_categories',JSON.stringify(categories));
+// ── SUPABASE SYNC ──
+async function persist(){
+  // Also save to localStorage as offline cache
+  localStorage.setItem('cp_products', JSON.stringify(products));
+  localStorage.setItem('cp_settings', JSON.stringify(settings));
+  localStorage.setItem('cp_categories', JSON.stringify(categories));
+  // Sync to Supabase in background
+  try {
+    // Save products
+    if(products.length){
+      const rows = products.map((p,i)=>({
+        id: p.id,
+        name: p.name,
+        name_en: p.nameEn||null,
+        barcode: p.barcode||null,
+        price: parseFloat(p.price)||0,
+        size: p.size||null,
+        material: p.material||null,
+        color: p.color||null,
+        weight: p.weight?parseFloat(p.weight):null,
+        note: p.note||null,
+        img: p.img||null,
+        foreign_prices: p.foreignPrices||{},
+        channel_prices: p.channelPrices||{},
+        cats: p.cats||[],
+        stock: p.stock!=null?parseInt(p.stock):null,
+        stock_low: p.stockLow||false,
+        sort_order: i,
+        updated_at: new Date().toISOString(),
+      }));
+      await sbFetch('POST','sl_products',rows,'');
+    }
+    // Save settings (upsert row id=1)
+    await sbFetch('POST','sl_settings',[{
+      id: 1,
+      admin_pwd: settings.adminPwd,
+      supplier_code: settings.supplierCode||null,
+      brand: settings.brand||null,
+      stock_threshold: settings.stockThreshold||10,
+      currencies: settings.currencies,
+      channels: settings.channels,
+      updated_at: new Date().toISOString(),
+    }],'');
+    // Save categories
+    if(categories.length){
+      // delete removed ones
+      await sbFetch('DELETE','sl_categories','','?id=gt.0');
+      const catRows = categories.map((name,i)=>({name, sort_order:i}));
+      await sbFetch('POST','sl_categories',catRows,'');
+    }
+  } catch(e){ console.warn('Supabase sync failed, saved locally:', e); }
+}
+
+async function loadFromSupabase(){
+  showLoading(true);
+  try {
+    // Load products
+    const prods = await sbFetch('GET','sl_products','','?order=sort_order.asc&limit=1000');
+    if(prods && prods.length>=0){
+      products = prods.map(p=>({
+        id: p.id,
+        name: p.name,
+        nameEn: p.name_en||'',
+        barcode: p.barcode||'',
+        price: p.price||0,
+        size: p.size||'',
+        material: p.material||'',
+        color: p.color||'',
+        weight: p.weight||'',
+        note: p.note||'',
+        img: p.img||null,
+        foreignPrices: p.foreign_prices||{},
+        channelPrices: p.channel_prices||{},
+        cats: p.cats||[],
+        stock: p.stock,
+        stockLow: p.stock_low||false,
+      }));
+      localStorage.setItem('cp_products', JSON.stringify(products));
+    }
+    // Load settings
+    const sets = await sbFetch('GET','sl_settings','','?id=eq.1&limit=1');
+    if(sets && sets.length>0){
+      const s = sets[0];
+      settings = {
+        adminPwd: s.admin_pwd||'admin123',
+        supplierCode: s.supplier_code||'',
+        brand: s.brand||'',
+        stockThreshold: s.stock_threshold||10,
+        currencies: s.currencies||settings.currencies,
+        channels: s.channels||[],
+      };
+      localStorage.setItem('cp_settings', JSON.stringify(settings));
+    }
+    // Load categories
+    const cats = await sbFetch('GET','sl_categories','','?order=sort_order.asc&limit=200');
+    if(cats && cats.length>0){
+      categories = cats.map(c=>c.name);
+      localStorage.setItem('cp_categories', JSON.stringify(categories));
+    }
+  } catch(e){
+    console.warn('Supabase load failed, using local cache:', e);
+    // Fallback to localStorage
+    products = JSON.parse(localStorage.getItem('cp_products')||'[]');
+    settings = JSON.parse(localStorage.getItem('cp_settings')||'null') || settings;
+    categories = JSON.parse(localStorage.getItem('cp_categories')||'null') || categories;
+  }
+  showLoading(false);
+}
+
+function showLoading(show){
+  let el = document.getElementById('loading-overlay');
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'loading-overlay';
+    el.style.cssText = 'position:fixed;inset:0;background:rgba(247,241,232,.9);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;font-family:var(--font);';
+    el.innerHTML = '<div style="font-size:24px;margin-bottom:12px;">☕</div><div style="font-size:14px;color:var(--muted);">載入資料中…</div>';
+    document.body.appendChild(el);
+  }
+  el.style.display = show ? 'flex' : 'none';
 }
 
 // ── GATE ──
@@ -616,9 +742,13 @@ function supLogin(){
   if(okPwd||okCode){
     document.getElementById('gate').style.display='none';
     document.getElementById('app-supplier').style.display='flex';
-    renderProducts(); renderSettingsForms(); populateExportSelects();
-    document.getElementById('set-brand').value=settings.brand||'';
-    document.getElementById('set-supplier-code').placeholder=settings.supplierCode?`目前：${settings.supplierCode}`:'例：SUP2025';
+    // Refresh from Supabase on login
+    loadFromSupabase().then(()=>{
+      renderProducts(); renderSettingsForms(); populateExportSelects();
+      document.getElementById('set-brand').value=settings.brand||'';
+      document.getElementById('set-supplier-code').placeholder=settings.supplierCode?`目前：${settings.supplierCode}`:'例：SUP2025';
+      const th=document.getElementById('set-threshold'); if(th) th.value=settings.stockThreshold||10;
+    });
   } else { document.getElementById('sup-err').textContent='密碼或代碼錯誤，請再試'; }
 }
 function buyerLogin(){
@@ -628,7 +758,13 @@ function buyerLogin(){
     buyerChannel=ch; orderQtys={};
     document.getElementById('gate').style.display='none';
     document.getElementById('app-buyer').style.display='flex';
-    initBuyer();
+    // Refresh product data from Supabase before showing
+    loadFromSupabase().then(()=>{
+      // Re-find channel after reload (settings may have updated)
+      const freshCh = settings.channels.find(c=>(c.code||'').toUpperCase()===code);
+      if(freshCh) buyerChannel=freshCh;
+      initBuyer();
+    });
   } else { document.getElementById('buyer-err').textContent='找不到此代碼，請確認後再試'; }
 }
 function logout(){
@@ -972,7 +1108,15 @@ function saveProduct(){
   else products.push(d);
   persist(); closePModal(); renderProducts();
 }
-function delProduct(id){if(!confirm('確定刪除？'))return; products=products.filter(p=>p.id!==id); persist(); renderProducts();}
+async function delProduct(id){
+  if(!confirm('確定刪除？'))return;
+  products=products.filter(p=>p.id!==id);
+  // Delete from Supabase
+  try{ await sbFetch('DELETE','sl_products','',`?id=eq.${id}`); }
+  catch(e){ console.warn('Delete sync failed',e); }
+  await persist();
+  renderProducts();
+}
 
 // ── SETTINGS ──
 function renderSettingsForms(){
@@ -1527,7 +1671,7 @@ function resetOrder(){
   if(!confirm(t('confirm_reset')))return;
   orderQtys={};renderBuyerTable();
 }
-function deductStock(){
+async function deductStock(){
   // called after order is finalized — deduct stock quantities
   const lines=products.filter(p=>(orderQtys[p.id]||0)>0);
   lines.forEach(p=>{
@@ -1540,9 +1684,9 @@ function deductStock(){
   });
   persist();
 }
-function finalizeOrder(){
+async function finalizeOrder(){
+  await deductStock();
   exportOrderXlsx();
-  deductStock();
   orderQtys={};
   document.getElementById('order-modal').classList.add('hidden');
   renderBuyerTable();
@@ -2051,13 +2195,21 @@ function setLang(lang){
 // ── UTIL ──
 function x(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
-// init - wrap in try/catch to surface any runtime errors
-try {
-  renderProducts();
-} catch(e) {
-  console.error('Init error:', e);
+// init - load from Supabase then render
+(async function(){
+  try {
+    await loadFromSupabase();
+    renderProducts();
+  } catch(e) {
+    console.error('Init error:', e);
+    // fallback: load from localStorage
+    products = JSON.parse(localStorage.getItem('cp_products')||'[]');
+    settings = JSON.parse(localStorage.getItem('cp_settings')||'null') || settings;
+    categories = JSON.parse(localStorage.getItem('cp_categories')||'null') || categories;
+    renderProducts();
+  }
   document.getElementById('gate').style.display = 'flex';
-}
+})();
 </script>
 <script>
 if('serviceWorker' in navigator){
