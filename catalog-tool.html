@@ -2501,7 +2501,7 @@ function x(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').re
   setupAutoBackup();
 })();
 </script>
-
+<script>
 // ── BATCH UPLOAD FUNCTIONS ──
 function downloadBatchTemplate(){
   const wb = XLSX.utils.book_new();
@@ -2741,7 +2741,7 @@ async function runBatchUpload(){
     console.error(e);
   }
 }
-
+</script>
 <script>
 if('serviceWorker' in navigator){
   window.addEventListener('load',()=>{
