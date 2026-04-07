@@ -275,6 +275,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       <div class="topbar"><div class="topbar-title">商品清單</div>
         <div class="topbar-actions">
           <button class="btn" onclick="pushToCloud()" title="儲存所有資料到雲端">☁️ 上傳雲端</button>
+          <button class="btn" onclick="downloadBatchTemplate()">⬇ 模板下載</button>
+          <button class="btn" onclick="document.getElementById('batch-modal').classList.remove('hidden')">📦 批次上傳</button>
           <button class="btn btn-primary" onclick="openPModal()">＋ 新增商品</button>
         </div></div>
       <div class="content">
