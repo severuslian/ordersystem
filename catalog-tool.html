@@ -184,6 +184,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 .order-table tr:hover td{background:var(--surface2);}
 .qty-input{width:68px;padding:5px 7px;border:1px solid var(--border);border-radius:var(--rs);font-family:var(--font);font-size:13px;text-align:center;}
 .qty-input:focus{outline:none;border-color:var(--accent);}
+.qty-unavailable{color:var(--err);font-size:12px;font-weight:600;white-space:nowrap;}
 .sub-cell{font-weight:600;min-width:86px;}
 .sub-zero{color:var(--hint);font-weight:400;}
 
@@ -1512,6 +1513,19 @@ function isLowStock(p){
   if(p.stock==null) return false;      // no stock set
   return p.stock < (settings.stockThreshold||10);
 }
+function isOutOfStock(p){
+  return p.stock!=null && Number(p.stock)<=0;
+}
+function removeUnavailableOrderQtys(){
+  let changed=false;
+  products.forEach(p=>{
+    if(isOutOfStock(p) && orderQtys[p.id]){
+      delete orderQtys[p.id];
+      changed=true;
+    }
+  });
+  return changed;
+}
 function stockBadge(p, lang){
   const labels={
     zh:{low:'庫存不足',ok:'庫存充足'}, en:{low:'Low Stock',ok:'In Stock'},
@@ -1881,6 +1895,8 @@ function renderBuyerTable(){
       </tr>`;
     }
     lastCat=cat;
+    const outOfStock=isOutOfStock(p);
+    if(outOfStock) delete orderQtys[p.id];
     const qty=orderQtys[p.id]||0;
     const priceInfo=calcProductPrice(p,ch,curr);
     const unitFinal=priceInfo.displayAmt;
@@ -1918,8 +1934,10 @@ function renderBuyerTable(){
       </td>
       <td style="font-size:11px;color:var(--muted);max-width:150px;line-height:1.8;">${feeDesc||'—'}</td>
       <td><div class="price-cell">${fmtAmt(unitFinal,curr)}</div><div style="font-size:11px;color:var(--hint);">${calcHint}</div></td>
-      <td><input class="qty-input" type="number" min="0" step="1" value="${qty||''}" placeholder="0"
-        oninput="orderQtys['${p.id}']=parseInt(this.value)||0;updateRowSub('${p.id}');updateSum()"></td>
+      <td>${outOfStock
+        ?`<span class="qty-unavailable">${L.out_of_stock}</span>`
+        :`<input class="qty-input" type="number" min="0" step="1" value="${qty||''}" placeholder="0"
+          oninput="orderQtys['${p.id}']=parseInt(this.value)||0;updateRowSub('${p.id}');updateSum()">`}</td>
       <td class="${qty>0?'sub-cell':'sub-zero'}" id="sub-${p.id}">${qty>0?fmtAmt(sub,curr):'—'}</td>
       ${curr.code!=='TWD'?`<td class="${qty>0?'sub-cell':'sub-zero'}" id="subtwd-${p.id}" style="color:var(--ok);font-weight:600;font-size:14px;">${qty>0?'NT$ '+Math.round(subTwd).toLocaleString():'—'}</td>`:''}
     </tr>`;
@@ -2029,6 +2047,11 @@ async function finalizeOrder(){
 
 function openOrderConfirm(){
   const curr=getBCurr(),ch=buyerChannel,L=I18N[buyerLang]||I18N.zh;
+  if(removeUnavailableOrderQtys()){
+    renderBuyerTable();
+    alert(L.out_of_stock_alert);
+    return;
+  }
   const isEn=buyerLang==='en';
   const isForeign=curr.code!=='TWD';
   const lines=products.filter(p=>(orderQtys[p.id]||0)>0);
@@ -2137,6 +2160,11 @@ function openOrderConfirm(){
 }
 
 async function exportOrderXlsx(){
+  if(removeUnavailableOrderQtys()){
+    renderBuyerTable();
+    alert(t('out_of_stock_alert'));
+    return;
+  }
   await deductStock();
   const curr=getBCurr(),ch=buyerChannel,L=I18N[buyerLang]||I18N.zh;
   const isEn=buyerLang==='en';
@@ -2620,6 +2648,11 @@ function closePdfOverlay(){
   document.getElementById('pdf-print-area').innerHTML='';
 }
 async function exportOrderPdf(){
+  if(removeUnavailableOrderQtys()){
+    renderBuyerTable();
+    alert(t('out_of_stock_alert'));
+    return;
+  }
   await deductStock();
   const lines=products.filter(p=>(orderQtys[p.id]||0)>0);
   if(!lines.length){alert(t('confirm_no_qty'));return;}
@@ -2658,6 +2691,7 @@ const I18N = {
     fees_label:'費用結構', currency_label:'貨幣', rate_label:'匯率',
     date_label:'產生日期', allFees:'含所有費用',
     confirm_reset:'確定清除所有採購數量？', confirm_no_qty:'請先填入採購數量',
+    out_of_stock:'無庫存', out_of_stock_alert:'部分商品已無庫存，已從採購單移除。',
   },
   en: {
     lang:'en', pageTitle:'Product Order List', pageTitle_en:'',
@@ -2678,6 +2712,7 @@ const I18N = {
     fees_label:'Fee Structure', currency_label:'Currency', rate_label:'Exchange Rate',
     date_label:'Date', allFees:'All fees included',
     confirm_reset:'Clear all quantities?', confirm_no_qty:'Please enter quantities first.',
+    out_of_stock:'Out of Stock', out_of_stock_alert:'Some items are out of stock and were removed from the order.',
   },
   ja: {
     lang:'ja', pageTitle:'商品注文リスト', pageTitle_en:'Product Order List',
@@ -2698,6 +2733,7 @@ const I18N = {
     fees_label:'手数料', currency_label:'通貨', rate_label:'為替レート',
     date_label:'作成日', allFees:'すべての手数料を含む',
     confirm_reset:'すべての注文数量をクリアしますか？', confirm_no_qty:'先に注文数量を入力してください。',
+    out_of_stock:'在庫切れ', out_of_stock_alert:'一部の商品は在庫切れのため、注文から削除されました。',
   },
   ko: {
     lang:'ko', pageTitle:'상품 주문 목록', pageTitle_en:'Product Order List',
@@ -2718,6 +2754,7 @@ const I18N = {
     fees_label:'수수료 구성', currency_label:'통화', rate_label:'환율',
     date_label:'생성일', allFees:'모든 수수료 포함',
     confirm_reset:'모든 주문 수량을 지우시겠습니까?', confirm_no_qty:'먼저 주문 수량을 입력하세요.',
+    out_of_stock:'품절', out_of_stock_alert:'일부 상품의 재고가 없어 주문에서 제외되었습니다.',
   },
 };
 function t(key){ return (I18N[buyerLang]||I18N.zh)[key]||key; }
