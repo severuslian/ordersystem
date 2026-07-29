@@ -52,7 +52,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 .tag{font-size:11px;padding:2px 7px;border-radius:20px;background:var(--surface2);color:var(--muted);}
 .form-input,.form-select,.form-textarea{padding:8px 12px;border:1px solid var(--border);border-radius:var(--rs);font-family:var(--font);font-size:13px;background:var(--surface);color:var(--text);transition:border-color .12s;width:100%;}
 .form-input:focus,.form-select:focus,.form-textarea:focus{outline:none;border-color:var(--accent);}
-#p-name,#p-name-en,#p-barcode{font-size:16px;}
+#p-name,#p-name-en,#p-barcode{font-size:16px !important;}
+.product-key-label{font-size:14px;font-weight:600;color:var(--text);}
 .form-textarea{resize:vertical;min-height:70px;}
 .form-label{font-size:12px;font-weight:500;color:var(--muted);display:block;margin-bottom:4px;}
 .form-group{display:flex;flex-direction:column;gap:4px;}
@@ -525,9 +526,9 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         </div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-        <div class="form-group"><label class="form-label">商品名稱（中文）*</label><input class="form-input" id="p-name" placeholder="例：棉麻手提包"></div>
-        <div class="form-group"><label class="form-label">English Product Name<span style="font-size:10px;color:var(--hint);font-weight:400;margin-left:4px;">非台灣通路商顯示此欄</span></label><input class="form-input" id="p-name-en" placeholder="e.g. Cotton Linen Tote Bag"></div>
-        <div class="form-group"><label class="form-label">條碼 / SKU</label><input class="form-input" id="p-barcode" placeholder="1234567890123" style="font-family:var(--mono);"></div>
+        <div class="form-group"><label class="form-label product-key-label">商品名稱（中文）*</label><input class="form-input" id="p-name" placeholder="例：棉麻手提包"></div>
+        <div class="form-group"><label class="form-label product-key-label">English Product Name<span style="font-size:10px;color:var(--hint);font-weight:400;margin-left:4px;">非台灣通路商顯示此欄</span></label><input class="form-input" id="p-name-en" placeholder="e.g. Cotton Linen Tote Bag"></div>
+        <div class="form-group"><label class="form-label product-key-label">條碼 / SKU</label><input class="form-input" id="p-barcode" placeholder="1234567890123" style="font-family:var(--mono);"></div>
         <div class="form-group"><label class="form-label">台幣定價（TWD）*</label><input class="form-input" id="p-price" type="number" placeholder="0"></div>
         <div class="form-group"><label class="form-label">尺寸</label><input class="form-input" id="p-size" placeholder="30×20×10 cm"></div>
         <div class="form-group"><label class="form-label">材質</label><input class="form-input" id="p-material" placeholder="100% 棉"></div>
