@@ -1019,7 +1019,7 @@ function buyerLogin(){
         buyerChannel=freshCh;
         buyerLang=freshCh.lang || (code==='B2B' ? 'en' : 'zh');
       }
-      initBuyer();
+      initBuyer(false);
     });
   } else { document.getElementById('buyer-err').textContent='找不到此代碼，請確認後再試'; }
 }
@@ -1783,7 +1783,7 @@ function fmtProductPrice(product,curr,ch){
 }
 
 // ── BUYER ──
-function initBuyer(){
+function initBuyer(keepCurrency=false){
   const ch=buyerChannel;
   // buyerLang is set externally by setLang(); do not override here
   const L=I18N[buyerLang]||I18N.zh;
@@ -1824,9 +1824,10 @@ function initBuyer(){
   document.getElementById('btn-reset-order').textContent=L.btn_reset;
   document.getElementById('btn-confirm-order').textContent=L.btn_confirm;
 
-  // currency dropdown — preserve selection if already set
+  // A fresh channel login must use that channel's default currency. Preserve a
+  // selection only while the same buyer is changing the display language.
   const currSel=document.getElementById('buyer-curr');
-  const prevCurr=currSel.value;
+  const prevCurr=keepCurrency ? currSel.value : '';
   currSel.innerHTML=settings.currencies.map(c=>`<option value="${c.code}">${c.name}（${c.code}）</option>`).join('');
   const def=prevCurr||ch.defaultCurrency||'TWD';
   if([...currSel.options].some(o=>o.value===def)) currSel.value=def;
@@ -2743,7 +2744,7 @@ function setLang(lang){
     else { btn.style.background='var(--surface)'; btn.style.color='var(--text)'; }
   });
   const savedCurr=document.getElementById('buyer-curr')&&document.getElementById('buyer-curr').value;
-  initBuyer();
+  initBuyer(true);
   if(savedCurr){
     const sel=document.getElementById('buyer-curr');
     if(sel) sel.value=savedCurr;
