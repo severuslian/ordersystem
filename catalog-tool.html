@@ -52,6 +52,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 .tag{font-size:11px;padding:2px 7px;border-radius:20px;background:var(--surface2);color:var(--muted);}
 .form-input,.form-select,.form-textarea{padding:8px 12px;border:1px solid var(--border);border-radius:var(--rs);font-family:var(--font);font-size:13px;background:var(--surface);color:var(--text);transition:border-color .12s;width:100%;}
 .form-input:focus,.form-select:focus,.form-textarea:focus{outline:none;border-color:var(--accent);}
+#p-name,#p-name-en,#p-barcode{font-size:16px;}
 .form-textarea{resize:vertical;min-height:70px;}
 .form-label{font-size:12px;font-weight:500;color:var(--muted);display:block;margin-bottom:4px;}
 .form-group{display:flex;flex-direction:column;gap:4px;}
@@ -373,9 +374,11 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         <div class="export-config">
           <div class="export-row" style="gap:12px;flex-wrap:wrap;">
             <div class="export-field"><label class="form-label">清冊語言 Language</label>
-              <div style="display:flex;border:1px solid var(--border);border-radius:var(--rs);overflow:hidden;width:130px;">
-                <button id="exp-lang-zh" onclick="setExpLang('zh')" style="flex:1;padding:7px 0;font-size:13px;font-weight:500;cursor:pointer;border:none;font-family:var(--font);background:var(--accent);color:#fff;">中文</button>
-                <button id="exp-lang-en" onclick="setExpLang('en')" style="flex:1;padding:7px 0;font-size:13px;font-weight:500;cursor:pointer;border:none;font-family:var(--font);background:var(--surface);color:var(--text);">EN</button>
+              <div style="display:flex;border:1px solid var(--border);border-radius:var(--rs);overflow:hidden;">
+                <button id="exp-lang-zh" onclick="setExpLang('zh')" style="padding:7px 10px;font-size:13px;font-weight:500;cursor:pointer;border:none;font-family:var(--font);background:var(--accent);color:#fff;">中文</button>
+                <button id="exp-lang-en" onclick="setExpLang('en')" style="padding:7px 10px;font-size:13px;font-weight:500;cursor:pointer;border:none;font-family:var(--font);background:var(--surface);color:var(--text);">EN</button>
+                <button id="exp-lang-ja" onclick="setExpLang('ja')" style="padding:7px 10px;font-size:13px;font-weight:500;cursor:pointer;border:none;font-family:var(--font);background:var(--surface);color:var(--text);">日本語</button>
+                <button id="exp-lang-ko" onclick="setExpLang('ko')" style="padding:7px 10px;font-size:13px;font-weight:500;cursor:pointer;border:none;font-family:var(--font);background:var(--surface);color:var(--text);">한국어</button>
               </div>
             </div>
             <div class="export-field"><label class="form-label">國家 / 貨幣 Nation / Currency</label>
@@ -1606,43 +1609,49 @@ function fmtAmt(amt,curr){
 }
 function fmtPrice(twd,curr,ch){return fmtAmt(calcFinal(twd,ch)*curr.rate,curr);}
 let expLang='zh';
+const EXP_I18N={
+  zh:{title:'商品目錄',info:'清冊資訊',products:'商品清單',noChannel:'無通路',noProducts:'請先新增商品',
+    catalogTitle:'清冊名稱',channel:'通路商',currency:'貨幣',rate:'匯率',fees:'費用結構',date:'匯出日期',totalProducts:'商品總數',language:'語言',brand:'品牌',base:'基準',
+    productName:'商品名稱',englishName:'英文名稱',barcode:'條碼/SKU',size:'尺寸',material:'材質',color:'顏色',weight:'重量(g)',basePrice:'台幣定價(TWD)',channelPrice:'通路特定定價(TWD)',purchase:'採購金額',priceType:'定價類型',notes:'備註',customPrice:'自訂外幣定價',customForeign:'自訂外幣定價',channelSpecific:'通路特定定價',defaultPrice:'預設換算',items:'件',image:'圖片',stock:'庫存',orderQty:'採購數量',twdPrice:'台幣定價'},
+  en:{title:'Product Catalog',info:'Info',products:'Products',noChannel:'No channel',noProducts:'No products yet',
+    catalogTitle:'Catalog Title',channel:'Channel',currency:'Currency',rate:'Exchange Rate',fees:'Fee Structure',date:'Export Date',totalProducts:'Total Products',language:'Language',brand:'Brand',base:'Base',
+    productName:'Product Name (EN)',englishName:'Product Name',barcode:'Barcode/SKU',size:'Size',material:'Material',color:'Color',weight:'Weight(g)',basePrice:'Base Price(TWD)',channelPrice:'Channel Override(TWD)',purchase:'Purchase Amount',priceType:'Price Type',notes:'Notes',customPrice:'Custom Price',customForeign:'Custom Foreign Price',channelSpecific:'Channel-specific',defaultPrice:'Default',items:'items',image:'Image',stock:'Stock',orderQty:'Order Qty',twdPrice:'TWD Price'},
+  ja:{title:'商品カタログ',info:'カタログ情報',products:'商品一覧',noChannel:'チャネルなし',noProducts:'商品がありません',
+    catalogTitle:'カタログ名',channel:'販売チャネル',currency:'通貨',rate:'為替レート',fees:'手数料',date:'出力日',totalProducts:'商品数',language:'言語',brand:'ブランド',base:'基準',
+    productName:'商品名 (EN)',englishName:'中国語商品名',barcode:'バーコード / SKU',size:'サイズ',material:'素材',color:'カラー',weight:'重量(g)',basePrice:'基本価格(TWD)',channelPrice:'チャネル価格(TWD)',purchase:'仕入金額',priceType:'価格種別',notes:'備考',customPrice:'個別価格',customForeign:'外貨個別価格',channelSpecific:'チャネル別',defaultPrice:'標準換算',items:'点',image:'画像',stock:'在庫',orderQty:'注文数',twdPrice:'TWD 価格'},
+  ko:{title:'상품 카탈로그',info:'카탈로그 정보',products:'상품 목록',noChannel:'채널 없음',noProducts:'상품이 없습니다',
+    catalogTitle:'카탈로그명',channel:'판매 채널',currency:'통화',rate:'환율',fees:'수수료',date:'내보낸 날짜',totalProducts:'상품 수',language:'언어',brand:'브랜드',base:'기준',
+    productName:'상품명 (EN)',englishName:'중문 상품명',barcode:'바코드 / SKU',size:'크기',material:'소재',color:'색상',weight:'무게(g)',basePrice:'기본 가격(TWD)',channelPrice:'채널 가격(TWD)',purchase:'구매 금액',priceType:'가격 유형',notes:'비고',customPrice:'맞춤 가격',customForeign:'외화 맞춤 가격',channelSpecific:'채널별',defaultPrice:'기본 환산',items:'개',image:'이미지',stock:'재고',orderQty:'주문 수량',twdPrice:'TWD 가격'}
+};
 function setExpLang(lang){
   expLang=lang;
-  ['zh','en'].forEach(l=>{
+  ['zh','en','ja','ko'].forEach(l=>{
     const btn=document.getElementById('exp-lang-'+l);
     if(!btn) return;
     btn.style.background = l===lang ? 'var(--accent)' : 'var(--surface)';
     btn.style.color      = l===lang ? '#fff' : 'var(--text)';
   });
   const ti=document.getElementById('cat-title');
-  if(ti&&!ti.dataset.userEdited) ti.value = lang==='en' ? 'Product Catalog' : '商品目錄';
+  if(ti&&!ti.dataset.userEdited) ti.value = EXP_I18N[lang].title;
   renderCatalog();
 }
 
 function exportCatXlsx(){
-  const isEn=expLang==='en';
+  const L=EXP_I18N[expLang]||EXP_I18N.zh;
   const curr=settings.currencies.find(c=>c.code===document.getElementById('exp-currency').value)||settings.currencies[0];
   const ci=document.getElementById('exp-channel').value;
   const ch=ci!==''?settings.channels[parseInt(ci)]:null;
-  const title=document.getElementById('cat-title').value||(isEn?'Product Catalog':'商品目錄');
+  const title=document.getElementById('cat-title').value||L.title;
   const today=new Date().toLocaleDateString('en-CA');
   const feeDesc=(ch?(ch.fees||[]).map(f=>`${f.label||'Fee'}: ${f.type==='pct'?f.value+'%':'TWD '+(parseFloat(f.value)||0)}`).join(' | '):'N/A');
   const foreignCodes=settings.currencies.filter(c=>c.code!=='TWD').map(c=>c.code);
   const infoRows=[
-    [isEn?'Catalog Title':'清冊名稱', title],
-    [isEn?'Channel':'通路商', ch?ch.name:(isEn?'(None)':'無')],
-    [isEn?'Currency':'貨幣', `${curr.name} (${curr.code})`],
-    [isEn?'Exchange Rate':'匯率', curr.rate!==1?`1 TWD = ${curr.rate} ${curr.code}`:(isEn?'Base':'基準')],
-    [isEn?'Fee Structure':'費用結構', feeDesc],
-    [isEn?'Export Date':'匯出日期', today],
-    [isEn?'Total Products':'商品總數', products.length],
-    [isEn?'Language':'語言', isEn?'English':'中文'],
-    [isEn?'Brand':'品牌', settings.brand||'—'],
+    [L.catalogTitle, title], [L.channel, ch?ch.name:L.noChannel], [L.currency, `${curr.name} (${curr.code})`],
+    [L.rate, curr.rate!==1?`1 TWD = ${curr.rate} ${curr.code}`:L.base], [L.fees, feeDesc], [L.date, today],
+    [L.totalProducts, products.length], [L.language, expLang==='zh'?'中文':expLang==='en'?'English':expLang==='ja'?'日本語':'한국어'], [L.brand, settings.brand||'—'],
   ];
-  const baseHeader=isEn
-    ?['#','Product Name (EN)','Product Name','Barcode/SKU','Size','Material','Color','Weight(g)','Base Price(TWD)','Channel Override(TWD)',`Purchase Amount(${curr.code})`,'Price Type','Notes']
-    :['#','商品名稱','英文名稱','條碼/SKU','尺寸','材質','顏色','重量(g)','台幣定價(TWD)','通路特定定價(TWD)',`採購金額(${curr.code})`,'定價類型','備註'];
-  const fpHeaders=foreignCodes.map(code=>isEn?`Custom Price(${code})`:(`自訂外幣定價(${code})`));
+  const baseHeader=['#',L.productName,L.englishName,L.barcode,L.size,L.material,L.color,L.weight,L.basePrice,L.channelPrice,`${L.purchase}(${curr.code})`,L.priceType,L.notes];
+  const fpHeaders=foreignCodes.map(code=>`${L.customPrice}(${code})`);
   const fullHeader=[...baseHeader,...fpHeaders];
   const dataRows=products.map((p,idx)=>{
     const pi=calcProductPrice(p,ch,curr);
@@ -1651,9 +1660,9 @@ function exportCatXlsx(){
     const fp=(p.foreignPrices||{})[curr.code];
     const hasFpOv=fp&&parseFloat(fp)>0&&curr.code!=='TWD';
     let priceType;
-    if(hasFpOv) priceType=isEn?'Custom Foreign Price':'自訂外幣定價';
-    else if(hasChOv) priceType=isEn?'Channel-specific':'通路特定定價';
-    else priceType=isEn?'Default':'預設換算';
+    if(hasFpOv) priceType=L.customForeign;
+    else if(hasChOv) priceType=L.channelSpecific;
+    else priceType=L.defaultPrice;
     const amt=curr.code==='JPY'||curr.code==='KRW'?Math.round(pi.displayAmt):+pi.displayAmt.toFixed(2);
     const baseRow=[idx+1,p.nameEn||p.name,p.name,p.barcode||'',p.size||'',p.material||'',p.color||'',p.weight||'',
       parseFloat(p.price)||0,hasChOv?parseFloat(chOv.price):'',amt,priceType,p.note||''];
@@ -1663,10 +1672,10 @@ function exportCatXlsx(){
   const wb=XLSX.utils.book_new();
   const wsInfo=XLSX.utils.aoa_to_sheet(infoRows);
   wsInfo['!cols']=[{wch:22},{wch:36}];
-  XLSX.utils.book_append_sheet(wb,wsInfo,isEn?'Info':'清冊資訊');
+  XLSX.utils.book_append_sheet(wb,wsInfo,L.info);
   const wsData=XLSX.utils.aoa_to_sheet([fullHeader,...dataRows]);
   wsData['!cols']=[5,24,20,16,14,14,12,10,16,18,16,18,22,...foreignCodes.map(()=>16)].map(w=>({wch:w}));
-  XLSX.utils.book_append_sheet(wb,wsData,isEn?'Products':'商品清單');
+  XLSX.utils.book_append_sheet(wb,wsData,L.products);
   const filename=`${title}_${ch?ch.name.replace(/ /g,'_'):'All'}_${curr.code}_${expLang}_${today}.xlsx`;
   XLSX.writeFile(wb,filename);
 }
@@ -1685,7 +1694,8 @@ function populateExportSelects(){
   setExpLang(expLang);
 }
 function renderCatalog(){
-  const isEn = expLang === 'en';
+  const L=EXP_I18N[expLang]||EXP_I18N.zh;
+  const isForeign=expLang!=='zh';
   const curr=settings.currencies.find(c=>c.code===document.getElementById('exp-currency').value)||settings.currencies[0];
   const ci=document.getElementById('exp-channel').value;
 
@@ -1693,44 +1703,28 @@ function renderCatalog(){
   const infoEl=document.getElementById('exp-preview-info');
   const infoTxt=document.getElementById('exp-info-text');
   if(infoEl&&infoTxt&&products.length){
-    const chName=ci!==''?settings.channels[parseInt(ci)].name:(isEn?'No channel':'無通路');
-    infoTxt.textContent=isEn
-      ?`${products.length} products · Channel: ${chName} · Currency: ${curr.code} · Language: English`
-      :`${products.length} 件商品・通路：${chName}・貨幣：${curr.code}・語言：中文`;
+    const chName=ci!==''?settings.channels[parseInt(ci)].name:L.noChannel;
+    const langName=expLang==='zh'?'中文':expLang==='en'?'English':expLang==='ja'?'日本語':'한국어';
+    infoTxt.textContent=`${products.length} ${L.items} · ${L.channel}: ${chName} · ${L.currency}: ${curr.code} · ${L.language}: ${langName}`;
     infoEl.style.display='block';
   } else if(infoEl){ infoEl.style.display='none'; }
 
   const ch=ci!==''?settings.channels[parseInt(ci)]:null;
-  const title=document.getElementById('cat-title').value||(isEn?'Product Catalog':'商品目錄');
+  const title=document.getElementById('cat-title').value||L.title;
   const el=document.getElementById('catalog-preview');
   if(!products.length){
-    el.innerHTML=`<div class="empty-state"><div class="icon">📄</div><p>${isEn?'No products yet':'請先新增商品'}</p></div>`;
+    el.innerHTML=`<div class="empty-state"><div class="icon">📄</div><p>${L.noProducts}</p></div>`;
     return;
   }
 
-  const today=new Date().toLocaleDateString(isEn?'en-CA':'zh-TW');
-
-  // i18n labels
-  const L = {
-    date:     isEn ? 'Date'     : '日期',
-    currency: isEn ? 'Currency' : '貨幣',
-    channel:  isEn ? 'Channel'  : '通路',
-    total:    isEn ? 'Total'    : '共',
-    items:    isEn ? 'items'    : '件',
-    colImg:   isEn ? 'Image'    : '圖片',
-    colName:  isEn ? 'Product Name' : '商品名稱',
-    colSku:   isEn ? 'Barcode/SKU'  : '條碼/SKU',
-    colSize:  isEn ? 'Size'         : '尺寸',
-    colMat:   isEn ? 'Material'     : '材質',
-    colPrice: isEn ? 'Purchase Amount' : '採購金額',
-  };
+  const today=new Date().toLocaleDateString(expLang==='ja'?'ja-JP':expLang==='ko'?'ko-KR':expLang==='en'?'en-CA':'zh-TW');
 
   // resolve product display name
   function dispName(p){
-    return (isEn && (p.nameEn||'').trim()) ? p.nameEn : p.name;
+    return (isForeign && (p.nameEn||'').trim()) ? p.nameEn : p.name;
   }
   function subName(p){
-    return (isEn && (p.nameEn||'').trim() && p.name)
+    return (isForeign && (p.nameEn||'').trim() && p.name)
       ? `<div style="font-size:11px;color:var(--hint);">${x(p.name)}</div>` : '';
   }
 
@@ -1750,20 +1744,20 @@ function renderCatalog(){
         <span>${L.date}：${today}</span>
         <span>${L.currency}：${curr.name}（${curr.code}）</span>
         ${ch?`<span>${L.channel}：${x(ch.name)}</span>`:''}
-        <span>${L.total} ${products.length} ${L.items}</span>
+        <span>${L.totalProducts}: ${products.length} ${L.items}</span>
       </div>
     </div>
     <table class="cat-table">
       <thead><tr>
-        <th style="width:150px;">${L.colImg}</th>
-        <th>${L.colName}</th>
-        <th>${L.colSku}</th>
-        <th>${L.colSize}</th>
-        <th>${L.colMat}</th>
-        <th>${L.colPrice}</th>
-        ${curr.code!=='TWD'?`<th style="font-size:9px;">${isEn?'TWD Price':'台幣定價'}</th>`:''}
-        <th style="text-align:center;">${isEn?'Stock':'庫存'}</th>
-        <th style="text-align:center;">${isEn?'Order Qty':'採購數量'}</th>
+        <th style="width:150px;">${L.image}</th>
+        <th>${L.productName}</th>
+        <th>${L.barcode}</th>
+        <th>${L.size}</th>
+        <th>${L.material}</th>
+        <th>${L.purchase}</th>
+        ${curr.code!=='TWD'?`<th style="font-size:9px;">${L.twdPrice}</th>`:''}
+        <th style="text-align:center;">${L.stock}</th>
+        <th style="text-align:center;">${L.orderQty}</th>
       </tr></thead>
       <tbody>${sortedProds.map(p=>`<tr>
         <td>${p.img?`<img class="cat-thumb zoomable-img" src="${p.img}" data-zoom-src="${p.img}" crossorigin="anonymous" referrerpolicy="no-referrer">`:'<div class="cat-thumb-ph">📦</div>'}</td>
