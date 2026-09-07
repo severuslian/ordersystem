@@ -248,16 +248,17 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       <button class="gate-tab" onclick="switchTab('buyer',this)">通路商採購 Place Order</button>
     </div>
     <div id="gf-supplier" class="gate-form">
-      <div class="form-group"><label class="form-label">管理員密碼 Password</label>
-        <input class="form-input" id="sup-pwd" type="password" placeholder="輸入後台密碼" onkeydown="if(event.key==='Enter')supLogin()"></div>
-      <button class="btn btn-primary" onclick="supLogin()">進入後台</button>
+      <div class="form-group"><label class="form-label">管理員 Email</label>
+        <input class="form-input" id="sup-email" type="email" value="severuslian.contact@gmail.com"></div>
+      <button class="btn btn-primary" onclick="emailLogin('supplier')">寄送登入連結</button>
       <div class="gate-err" id="sup-err"></div>
       <div style="font-size:11px;color:var(--hint);text-align:center;">預設密碼：admin123（可在設定中修改）</div>
     </div>
     <div id="gf-buyer" class="gate-form" style="display:none;">
+      <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="buyer-email" type="email" placeholder="your@email.com"></div>
       <div class="form-group"><label class="form-label">通路商專屬代碼 Store Access Code</label>
         <input class="form-input" id="buyer-code" placeholder="輸入您的專屬代碼" onkeydown="if(event.key==='Enter')buyerLogin()"></div>
-      <button class="btn btn-primary" onclick="buyerLogin()">進入採購頁面</button>
+      <button class="btn btn-primary" onclick="emailLogin('buyer')">Email 驗證並進入採購頁面</button>
       <div class="gate-err" id="buyer-err"></div>
     </div>
   </div>
@@ -274,6 +275,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     <div class="nav-section">
       <div class="nav-lbl">管理</div>
       <div class="nav-item active" onclick="showPage('products',this)"><span>📋</span> 商品清單</div>
+      <div class="nav-item" onclick="showPage('orders',this)"><span>📦</span> 訂單與統計</div>
       <div class="nav-item" onclick="showPage('categories',this)"><span>🏷️</span> 分類管理</div>
       <div class="nav-item" onclick="showPage('settings',this)"><span>⚙️</span> 設定</div>
     </div>
@@ -305,6 +307,15 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       </div>
     </div>
     <!-- settings page -->
+    <div id="sup-page-orders" class="page">
+      <div class="topbar"><div class="topbar-title">訂單與統計</div><div class="topbar-actions"><button class="btn" onclick="loadOrders()">↻ 重新整理</button></div></div>
+      <div class="content">
+        <div class="export-config"><div class="export-row"><div class="export-field"><label class="form-label">開始日期</label><input class="form-input" type="date" id="order-date-from" onchange="renderOrderStats()"></div><div class="export-field"><label class="form-label">結束日期</label><input class="form-input" type="date" id="order-date-to" onchange="renderOrderStats()"></div><button class="btn" onclick="clearOrderDates()">全部期間</button></div></div>
+        <div id="order-stats-summary" class="stats-bar" style="margin:16px 0;"></div>
+        <div class="settings-section"><div class="settings-title">商品下單數量統計</div><div id="order-product-stats"></div></div>
+        <div class="settings-section"><div class="settings-title">訂單紀錄</div><div id="orders-list"></div></div>
+      </div>
+    </div>
     <div id="sup-page-settings" class="page">
       <div class="topbar"><div class="topbar-title">設定</div>
         <div class="topbar-actions"><button class="btn btn-primary" onclick="saveSettings()">儲存設定</button></div></div>
@@ -834,7 +845,7 @@ let settings = {
   ]
 };
 let editingId=null, currentImg=null, currentImgFile=null;
-let buyerChannel=null, orderQtys={};
+let buyerChannel=null, orderQtys={}, orders=[], savedOrderSignature='', savedOrderInfo=null;
 let currentCats=[];   // tags being edited in modal
 let activeCatFilter=''; // '' = all
 let dragSrcId=null;
@@ -991,11 +1002,21 @@ function switchTab(role,el){
   document.getElementById('gf-supplier').style.display=role==='supplier'?'flex':'none';
   document.getElementById('gf-buyer').style.display=role==='buyer'?'flex':'none';
 }
-function supLogin(){
-  const val=document.getElementById('sup-pwd').value;
-  const okPwd=val===settings.adminPwd;
-  const okCode=settings.supplierCode&&val.toUpperCase()===(settings.supplierCode||'').toUpperCase();
-  if(okPwd||okCode){
+async function emailLogin(role){
+  const email=document.getElementById(role==='supplier'?'sup-email':'buyer-email').value.trim().toLowerCase();
+  if(role==='supplier'&&email!=='severuslian.contact@gmail.com'){document.getElementById('sup-err').textContent='此 Email 沒有管理員權限';return;}
+  if(!email){document.getElementById(role==='supplier'?'sup-err':'buyer-err').textContent='請輸入 Email';return;}
+  const {data:{user}}=await sbClient.auth.getUser();
+  if(user?.email?.toLowerCase()===email){if(role==='supplier')await enterSupplier();else await buyerLogin();return;}
+  localStorage.setItem('sl_pending_role',role);
+  if(role==='buyer') localStorage.setItem('sl_pending_channel',document.getElementById('buyer-code').value.trim().toUpperCase());
+  const {error}=await sbClient.auth.signInWithOtp({email,options:{emailRedirectTo:location.href.split('#')[0]}});
+  if(error){document.getElementById(role==='supplier'?'sup-err':'buyer-err').textContent=error.message;return;}
+  alert('登入連結已寄到 '+email+'，請開啟信件中的連結。');
+}
+async function enterSupplier(){
+  const {data:{user}}=await sbClient.auth.getUser();
+  if(user?.email?.toLowerCase()==='severuslian.contact@gmail.com'){
     document.getElementById('gate').style.display='none';
     document.getElementById('app-supplier').style.display='flex';
     startAutoUpload(); // start auto upload every 2 min
@@ -1006,10 +1027,11 @@ function supLogin(){
       document.getElementById('set-supplier-code').placeholder=settings.supplierCode?`目前：${settings.supplierCode}`:'例：SUP2025';
       const th=document.getElementById('set-threshold'); if(th) th.value=settings.stockThreshold||10;
     });
-  } else { document.getElementById('sup-err').textContent='密碼或代碼錯誤，請再試'; }
+  } else { document.getElementById('sup-err').textContent='此帳號沒有管理員權限'; }
 }
-function buyerLogin(){
-  const code=document.getElementById('buyer-code').value.trim().toUpperCase();
+async function buyerLogin(){
+  const {data:{user}}=await sbClient.auth.getUser(); if(!user?.email){return;}
+  const code=(document.getElementById('buyer-code').value||localStorage.getItem('sl_pending_channel')||'').trim().toUpperCase();
   const ch=settings.channels.find(c=>(c.code||'').toUpperCase()===code);
   if(ch){
     buyerChannel=ch; orderQtys={};
@@ -1028,12 +1050,12 @@ function buyerLogin(){
     });
   } else { document.getElementById('buyer-err').textContent='找不到此代碼，請確認後再試'; }
 }
-function logout(){
+async function logout(){
+  await sbClient.auth.signOut();
   stopAutoUpload(); // stop auto upload on logout
   document.getElementById('app-supplier').style.display='none';
   document.getElementById('app-buyer').style.display='none';
   document.getElementById('gate').style.display='flex';
-  document.getElementById('sup-pwd').value='';
   document.getElementById('buyer-code').value='';
   document.getElementById('sup-err').textContent='';
   document.getElementById('buyer-err').textContent='';
@@ -1049,6 +1071,7 @@ function showPage(page,el){
   if(page==='settings'){renderSettingsForms(); document.getElementById('set-brand').value=settings.brand||''; document.getElementById('set-supplier-code').placeholder=settings.supplierCode?`目前：${settings.supplierCode}`:'例：SUP2025'; const th=document.getElementById('set-threshold'); if(th) th.value=settings.stockThreshold||10; updateSyncStatus();}
   if(page==='export'){populateExportSelects(); renderCatalog();}
   if(page==='categories'){renderCategoryManagePage();}
+  if(page==='orders'){loadOrders();}
 }
 
 // ── PRODUCTS ──
@@ -1932,7 +1955,7 @@ function renderBuyerTable(){
       <td>${outOfStock
         ?`<span class="qty-unavailable">${L.out_of_stock}</span>`
         :`<input class="qty-input" type="number" min="0" step="1" value="${qty||''}" placeholder="0"
-          oninput="orderQtys['${p.id}']=parseInt(this.value)||0;updateRowSub('${p.id}');updateSum()">`}</td>
+          oninput="orderQtys['${p.id}']=parseInt(this.value)||0;savedOrderInfo=null;updateRowSub('${p.id}');updateSum()">`}</td>
       <td class="${qty>0?'sub-cell':'sub-zero'}" id="sub-${p.id}">${qty>0?fmtAmt(sub,curr):'—'}</td>
       ${curr.code!=='TWD'?`<td class="${qty>0?'sub-cell':'sub-zero'}" id="subtwd-${p.id}" style="color:var(--ok);font-weight:600;font-size:14px;">${qty>0?'NT$ '+Math.round(subTwd).toLocaleString():'—'}</td>`:''}
     </tr>`;
@@ -2017,7 +2040,22 @@ function updateSum(){
 }
 function resetOrder(){
   if(!confirm(t('confirm_reset')))return;
-  orderQtys={};renderBuyerTable();
+  orderQtys={};savedOrderInfo=null;savedOrderSignature='';renderBuyerTable();
+}
+function orderPayload(){
+  const curr=getBCurr(),ch=buyerChannel;
+  return products.filter(p=>(orderQtys[p.id]||0)>0).map(p=>({productId:p.id,qty:orderQtys[p.id],unitAmount:calcProductPrice(p,ch,curr).displayAmt,unitTwd:calcFinal(getBaseTwd(p,ch),ch)}));
+}
+async function ensureOrderSaved(){
+  const items=orderPayload(); const signature=JSON.stringify(items)+getBCurr().code+buyerChannel.code;
+  if(savedOrderInfo&&savedOrderSignature===signature) return savedOrderInfo;
+  const {data,error}=await sbClient.functions.invoke('create-order',{body:{channelCode:buyerChannel.code,currencyCode:getBCurr().code,language:buyerLang,items}});
+  if(error||data?.error) throw new Error(data?.error||error.message);
+  savedOrderSignature=signature;savedOrderInfo=data.order;await loadFromSupabase();return savedOrderInfo;
+}
+function orderSaveErrorMessage(e){
+  const msg=String(e?.message||e||'');
+  return msg.includes('PENDING_ORDER_EXISTS')?t('pending_order_exists'):msg;
 }
 async function deductStock(){
   const lines=products.filter(p=>(orderQtys[p.id]||0)>0);
@@ -2160,7 +2198,7 @@ async function exportOrderXlsx(){
     alert(t('out_of_stock_alert'));
     return;
   }
-  await deductStock();
+  try{await ensureOrderSaved();}catch(e){alert(orderSaveErrorMessage(e));return;}
   const curr=getBCurr(),ch=buyerChannel,L=I18N[buyerLang]||I18N.zh;
   const isEn=buyerLang==='en';
   const isForeign=curr.code!=='TWD';
@@ -2648,7 +2686,7 @@ async function exportOrderPdf(){
     alert(t('out_of_stock_alert'));
     return;
   }
-  await deductStock();
+  try{await ensureOrderSaved();}catch(e){alert(orderSaveErrorMessage(e));return;}
   const lines=products.filter(p=>(orderQtys[p.id]||0)>0);
   if(!lines.length){alert(t('confirm_no_qty'));return;}
   const ch=buyerChannel, curr=getBCurr();
@@ -2687,6 +2725,7 @@ const I18N = {
     date_label:'產生日期', allFees:'含所有費用',
     confirm_reset:'確定清除所有採購數量？', confirm_no_qty:'請先填入採購數量',
     out_of_stock:'無庫存', out_of_stock_alert:'部分商品已無庫存，已從採購單移除。',
+    pending_order_exists:'此通路已有一筆尚未出貨的訂單，請等待出貨或聯絡供應商取消後再下單。',
   },
   en: {
     lang:'en', pageTitle:'Product Order List', pageTitle_en:'',
@@ -2708,6 +2747,7 @@ const I18N = {
     date_label:'Date', allFees:'All fees included',
     confirm_reset:'Clear all quantities?', confirm_no_qty:'Please enter quantities first.',
     out_of_stock:'Out of Stock', out_of_stock_alert:'Some items are out of stock and were removed from the order.',
+    pending_order_exists:'This channel already has an order awaiting shipment. Please wait until it is shipped or contact the supplier to cancel it before placing another order.',
   },
   ja: {
     lang:'ja', pageTitle:'商品注文リスト', pageTitle_en:'Product Order List',
@@ -2729,6 +2769,7 @@ const I18N = {
     date_label:'作成日', allFees:'すべての手数料を含む',
     confirm_reset:'すべての注文数量をクリアしますか？', confirm_no_qty:'先に注文数量を入力してください。',
     out_of_stock:'在庫切れ', out_of_stock_alert:'一部の商品は在庫切れのため、注文から削除されました。',
+    pending_order_exists:'このチャネルには未出荷の注文があります。出荷完了を待つか、仕入先にキャンセルを依頼してから再注文してください。',
   },
   ko: {
     lang:'ko', pageTitle:'상품 주문 목록', pageTitle_en:'Product Order List',
@@ -2750,6 +2791,7 @@ const I18N = {
     date_label:'생성일', allFees:'모든 수수료 포함',
     confirm_reset:'모든 주문 수량을 지우시겠습니까?', confirm_no_qty:'먼저 주문 수량을 입력하세요.',
     out_of_stock:'품절', out_of_stock_alert:'일부 상품의 재고가 없어 주문에서 제외되었습니다.',
+    pending_order_exists:'이 채널에는 아직 출고되지 않은 주문이 있습니다. 출고 완료를 기다리거나 공급업체에 취소를 요청한 후 다시 주문하세요.',
   },
 };
 function t(key){ return (I18N[buyerLang]||I18N.zh)[key]||key; }
@@ -2782,6 +2824,31 @@ function setLang(lang){
     if(sel) sel.value=savedCurr;
   }
   renderBuyerTable();
+}
+
+// ── ORDERS & STATS ──
+async function loadOrders(){
+  const {data,error}=await sbClient.functions.invoke('admin-orders',{body:{action:'list'}});
+  if(error||data?.error){document.getElementById('orders-list').innerHTML='<div class="empty-state"><p>訂單載入失敗，請重新登入</p></div>';return;}
+  orders=data.orders||[];renderOrderStats();
+}
+function filteredOrders(){
+  const from=document.getElementById('order-date-from')?.value,to=document.getElementById('order-date-to')?.value;
+  return orders.filter(o=>{const d=o.created_at.slice(0,10);return(!from||d>=from)&&(!to||d<=to)});
+}
+function clearOrderDates(){document.getElementById('order-date-from').value='';document.getElementById('order-date-to').value='';renderOrderStats();}
+function renderOrderStats(){
+  const list=filteredOrders(),active=list.filter(o=>o.status!=='cancelled');
+  const qty=active.reduce((s,o)=>s+Number(o.total_qty||0),0),twd=active.reduce((s,o)=>s+Number(o.total_twd||0),0);
+  document.getElementById('order-stats-summary').innerHTML=`<div class="stat-pill"><div class="stat-val">${list.length}</div><div class="stat-lbl">訂單數</div></div><div class="stat-pill"><div class="stat-val">${active.length}</div><div class="stat-lbl">有效訂單</div></div><div class="stat-pill"><div class="stat-val">${qty}</div><div class="stat-lbl">總下單件數</div></div><div class="stat-pill"><div class="stat-val">NT$ ${Math.round(twd).toLocaleString()}</div><div class="stat-lbl">有效訂單總額</div></div>`;
+  const sums={};active.forEach(o=>(o.items||[]).forEach(i=>{const k=i.productId;sums[k]??={name:i.nameEn||i.name||k,barcode:i.barcode||'',qty:0};sums[k].qty+=Number(i.qty||0)}));
+  const rows=Object.values(sums).sort((a,b)=>b.qty-a.qty);
+  document.getElementById('order-product-stats').innerHTML=rows.length?`<table class="fee-table"><thead><tr><th>商品名稱</th><th>條碼 / SKU</th><th style="width:120px;">累計數量</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${x(r.name)}</td><td class="bc">${x(r.barcode||'—')}</td><td><strong>${r.qty}</strong></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state"><p>此期間尚無有效訂單</p></div>';
+  document.getElementById('orders-list').innerHTML=list.length?`<table class="fee-table"><thead><tr><th>訂單編號／時間</th><th>通路／下單人</th><th>內容</th><th>金額</th><th>狀態</th><th></th></tr></thead><tbody>${list.map(o=>`<tr><td><strong>${x(o.order_no)}</strong><br><span style="font-size:11px;color:var(--hint)">${new Date(o.created_at).toLocaleString('zh-TW')}</span></td><td>${x(o.channel_name)}<br><span style="font-size:11px">${x(o.buyer_email)}</span></td><td>${(o.items||[]).map(i=>`${x(i.nameEn||i.name)} × ${i.qty}`).join('<br>')}</td><td>${x(o.currency_code)} ${Number(o.total_amount).toLocaleString()}<br><span style="font-size:11px;color:var(--hint)">NT$ ${Math.round(Number(o.total_twd)).toLocaleString()}</span></td><td>${o.status==='pending'?'待出貨':o.status==='shipped'?'已出貨':'已取消'}</td><td>${o.status==='pending'?`<button class="btn btn-sm btn-ok" onclick="setOrderStatus('${o.id}','shipped')">已出貨</button> <button class="btn btn-sm btn-danger" onclick="setOrderStatus('${o.id}','cancelled')">取消訂單</button>`:o.status==='shipped'?`<button class="btn btn-sm btn-danger" onclick="setOrderStatus('${o.id}','cancelled')">取消出貨並回補庫存</button>`:''}</td></tr>`).join('')}</tbody></table>`:'<div class="empty-state"><p>此期間尚無訂單</p></div>';
+}
+async function setOrderStatus(id,status){
+  if(!confirm(status==='shipped'?'確認此訂單已出貨？':'確認取消訂單並回補庫存？'))return;
+  const {data,error}=await sbClient.functions.invoke('admin-orders',{body:{action:'status',orderId:id,status}});if(error||data?.error){alert('更新失敗');return;}await loadOrders();await loadFromSupabase();renderProducts();
 }
 
 // ── UTIL ──
@@ -2846,6 +2913,14 @@ function x(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').re
     renderProducts();
   }
   document.getElementById('gate').style.display = 'flex';
+  const {data:{session}}=await sbClient.auth.getSession();
+  if(session){
+    const role=localStorage.getItem('sl_pending_role');
+    if(role==='buyer'){
+      document.getElementById('buyer-code').value=localStorage.getItem('sl_pending_channel')||'';
+      await buyerLogin();
+    } else if(session.user.email?.toLowerCase()==='severuslian.contact@gmail.com') await enterSupplier();
+  }
   setupAutoPing();
   setupAutoBackup();
 })();
