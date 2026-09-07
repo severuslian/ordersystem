@@ -274,7 +274,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     <div class="nav-section">
       <div class="nav-lbl">管理</div>
       <div class="nav-item active" onclick="showPage('products',this)"><span>📋</span> 商品清單</div>
-      <div class="nav-item" onclick="showPage('orders',this)"><span>📦</span> 訂單與統計</div>
+      <div class="nav-item" id="nav-orders" onclick="showPage('orders',this)"><span>📦</span> 訂單與統計 <span id="order-pending-badge" style="display:none;margin-left:auto;background:var(--err);color:#fff;border-radius:999px;min-width:20px;height:20px;padding:0 6px;align-items:center;justify-content:center;font-size:11px;font-weight:700;">0</span></div>
       <div class="nav-item" onclick="showPage('categories',this)"><span>🏷️</span> 分類管理</div>
       <div class="nav-item" onclick="showPage('settings',this)"><span>⚙️</span> 設定</div>
     </div>
@@ -299,6 +299,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
           <button class="btn btn-primary" onclick="openPModal()">＋ 新增商品</button>
         </div></div>
       <div class="content">
+        <div id="new-order-alert" style="display:none;margin-bottom:14px;padding:13px 16px;border:1px solid #D8AE72;background:#FFF4DF;border-radius:var(--r);color:#76511F;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;"></div>
         <div class="stats-bar" id="stats-bar"></div>
         <div class="toolbar"><input class="search-box" type="text" placeholder="搜尋名稱、條碼…" id="search-input" oninput="renderProducts()"></div>
         <div class="filter-bar" id="cat-filter-bar"></div>
@@ -1017,6 +1018,7 @@ async function enterSupplier(){
     document.getElementById('set-admin-email').value=settings.adminEmail||'';
     document.getElementById('set-supplier-code').placeholder=settings.supplierCode?`目前：${settings.supplierCode}`:'例：SUP2025';
     const th=document.getElementById('set-threshold'); if(th) th.value=settings.stockThreshold||10;
+    loadOrders(true);
   });
 }
 async function buyerLogin(){
@@ -2826,10 +2828,45 @@ function setLang(lang){
 }
 
 // ── ORDERS & STATS ──
-async function loadOrders(){
+async function loadOrders(silent=false){
   const {data,error}=await sbClient.functions.invoke('admin-orders',{body:{action:'list',accessToken:supplierAccessToken}});
   if(error||data?.error){document.getElementById('orders-list').innerHTML='<div class="empty-state"><p>訂單載入失敗，請重新登入後台</p></div>';return;}
-  orders=data.orders||[];renderOrderStats();
+  orders=data.orders||[];updateOrderReminder();renderOrderStats();
+  if(!silent&&orders.filter(o=>o.status==='pending').length) showToast('🔔 有待出貨的新訂單');
+}
+function updateOrderReminder(){
+  const count=orders.filter(o=>o.status==='pending').length;
+  const badge=document.getElementById('order-pending-badge');
+  const alertBox=document.getElementById('new-order-alert');
+  if(badge){badge.textContent=count;badge.style.display=count?'inline-flex':'none';}
+  if(alertBox){
+    alertBox.style.display=count?'flex':'none';
+    alertBox.innerHTML=count?`<div><strong>🔔 有 ${count} 筆新訂單等待處理</strong><div style="font-size:12px;margin-top:2px;">請前往訂單與統計查看內容、下載 PDF 或更新出貨狀態。</div></div><button class="btn btn-sm" onclick="showPage('orders',document.getElementById('nav-orders'))">查看訂單</button>`:'';
+  }
+}
+function orderActionButtons(o){
+  const pdf=`<button class="btn btn-sm" onclick="viewAdminOrderPdf('${o.id}')">查看 PDF</button> <button class="btn btn-sm btn-primary" onclick="downloadAdminOrderPdf('${o.id}',this)">下載 PDF</button>`;
+  if(o.status==='pending') return `${pdf}<br><button class="btn btn-sm btn-ok" style="margin-top:5px;" onclick="setOrderStatus('${o.id}','shipped')">已出貨</button> <button class="btn btn-sm btn-danger" style="margin-top:5px;" onclick="setOrderStatus('${o.id}','cancelled')">取消訂單</button>`;
+  if(o.status==='shipped') return `${pdf}<br><button class="btn btn-sm btn-danger" style="margin-top:5px;" onclick="setOrderStatus('${o.id}','cancelled')">取消出貨並回補庫存</button>`;
+  return pdf;
+}
+function buildAdminOrderPdfHtml(o){
+  const isEn=o.language!=='zh',code=o.currency_code||'TWD';
+  const sym={TWD:'NT$',JPY:'¥',KRW:'₩',USD:'$',EUR:'€',GBP:'£'}[code]||(code+' ');
+  const money=v=>sym+Number(v||0).toLocaleString(undefined,{maximumFractionDigits:2});
+  const rows=(o.items||[]).map(i=>`<tr><td>${x(isEn?(i.nameEn||i.name):(i.name||i.nameEn))}</td><td>${x(i.barcode||'—')}</td><td>${money(i.unitAmount)}</td><td style="text-align:center;">${Number(i.qty||0)}</td><td class="price">${money(i.subtotal!=null?i.subtotal:Number(i.unitAmount||0)*Number(i.qty||0))}${code!=='TWD'?`<br><span class="twd">NT$ ${Math.round(Number(i.subtotalTwd||0)).toLocaleString()}</span>`:''}</td></tr>`).join('');
+  const status=o.status==='pending'?(isEn?'Pending shipment':'待出貨'):o.status==='shipped'?(isEn?'Shipped':'已出貨'):(isEn?'Cancelled':'已取消');
+  const total=money(o.total_amount),totalTwd=`NT$ ${Math.round(Number(o.total_twd||0)).toLocaleString()}`;
+  return `<div class="pdf-doc"><h2>${settings.brand?x(settings.brand)+' — ':''}${isEn?'Purchase Order':'採購訂單'}</h2><div class="pdf-meta">${isEn?'Order No.':'訂單編號'}：${x(o.order_no)}<br>${isEn?'Channel':'通路商'}：${x(o.channel_name)}${o.buyer_email?` &lt;${x(o.buyer_email)}&gt;`:''}<br>${isEn?'Date':'下單時間'}：${new Date(o.created_at).toLocaleString(isEn?'en-US':'zh-TW')}<br>${isEn?'Status':'狀態'}：${status} &nbsp;|&nbsp; ${isEn?'Currency':'貨幣'}：${x(code)}</div><table><thead><tr><th>${isEn?'Product':'商品名稱'}</th><th>${isEn?'Barcode / SKU':'條碼 / SKU'}</th><th>${isEn?'Unit Price':'單價'}</th><th style="text-align:center;">${isEn?'Qty':'數量'}</th><th>${isEn?'Subtotal':'小計'}</th></tr></thead><tbody>${rows}<tr class="grand"><td colspan="4" style="text-align:right;">${isEn?'Order Total':'訂單總額'}</td><td>${total}${code!=='TWD'?`<br><span class="twd">${totalTwd}</span>`:''}</td></tr></tbody></table><div class="footer">${x(settings.brand||'SEVERUS LIAN')} · ${x(o.order_no)}</div></div>`;
+}
+function viewAdminOrderPdf(id){
+  const o=orders.find(v=>v.id===id);if(!o){alert('找不到此訂單');return;}
+  openPdfOverlay(buildAdminOrderPdfHtml(o),`${o.order_no} — ${o.channel_name}`);
+}
+async function downloadAdminOrderPdf(id,btn){
+  const o=orders.find(v=>v.id===id);if(!o){alert('找不到此訂單');return;}
+  openPdfOverlay(buildAdminOrderPdfHtml(o),`${o.order_no} — ${o.channel_name}`);
+  await captureToPdf(document.getElementById('pdf-print-area'),`${o.order_no}_${String(o.channel_name||'Order').replace(/[^\w\u3400-\u9fff-]+/g,'_')}`,btn);
 }
 function filteredOrders(){
   const from=document.getElementById('order-date-from')?.value,to=document.getElementById('order-date-to')?.value;
@@ -2843,7 +2880,7 @@ function renderOrderStats(){
   const sums={};active.forEach(o=>(o.items||[]).forEach(i=>{const k=i.productId;sums[k]??={name:i.nameEn||i.name||k,barcode:i.barcode||'',qty:0};sums[k].qty+=Number(i.qty||0)}));
   const rows=Object.values(sums).sort((a,b)=>b.qty-a.qty);
   document.getElementById('order-product-stats').innerHTML=rows.length?`<table class="fee-table"><thead><tr><th>商品名稱</th><th>條碼 / SKU</th><th style="width:120px;">累計數量</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${x(r.name)}</td><td class="bc">${x(r.barcode||'—')}</td><td><strong>${r.qty}</strong></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state"><p>此期間尚無有效訂單</p></div>';
-  document.getElementById('orders-list').innerHTML=list.length?`<table class="fee-table"><thead><tr><th>訂單編號／時間</th><th>通路／下單人</th><th>內容</th><th>金額</th><th>狀態</th><th></th></tr></thead><tbody>${list.map(o=>`<tr><td><strong>${x(o.order_no)}</strong><br><span style="font-size:11px;color:var(--hint)">${new Date(o.created_at).toLocaleString('zh-TW')}</span></td><td>${x(o.channel_name)}<br><span style="font-size:11px">${x(o.buyer_email)}</span></td><td>${(o.items||[]).map(i=>`${x(i.nameEn||i.name)} × ${i.qty}`).join('<br>')}</td><td>${x(o.currency_code)} ${Number(o.total_amount).toLocaleString()}<br><span style="font-size:11px;color:var(--hint)">NT$ ${Math.round(Number(o.total_twd)).toLocaleString()}</span></td><td>${o.status==='pending'?'待出貨':o.status==='shipped'?'已出貨':'已取消'}</td><td>${o.status==='pending'?`<button class="btn btn-sm btn-ok" onclick="setOrderStatus('${o.id}','shipped')">已出貨</button> <button class="btn btn-sm btn-danger" onclick="setOrderStatus('${o.id}','cancelled')">取消訂單</button>`:o.status==='shipped'?`<button class="btn btn-sm btn-danger" onclick="setOrderStatus('${o.id}','cancelled')">取消出貨並回補庫存</button>`:''}</td></tr>`).join('')}</tbody></table>`:'<div class="empty-state"><p>此期間尚無訂單</p></div>';
+  document.getElementById('orders-list').innerHTML=list.length?`<table class="fee-table"><thead><tr><th>訂單編號／時間</th><th>通路／聯絡信箱</th><th>內容</th><th>金額</th><th>狀態</th><th style="min-width:220px;">操作</th></tr></thead><tbody>${list.map(o=>`<tr><td><strong>${x(o.order_no)}</strong><br><span style="font-size:11px;color:var(--hint)">${new Date(o.created_at).toLocaleString('zh-TW')}</span></td><td>${x(o.channel_name)}<br><span style="font-size:11px">${x(o.buyer_email||'—')}</span></td><td>${(o.items||[]).map(i=>`${x(i.nameEn||i.name)} × ${i.qty}`).join('<br>')}</td><td>${x(o.currency_code)} ${Number(o.total_amount).toLocaleString()}<br><span style="font-size:11px;color:var(--hint)">NT$ ${Math.round(Number(o.total_twd)).toLocaleString()}</span></td><td>${o.status==='pending'?'待出貨':o.status==='shipped'?'已出貨':'已取消'}</td><td>${orderActionButtons(o)}</td></tr>`).join('')}</tbody></table>`:'<div class="empty-state"><p>此期間尚無訂單</p></div>';
 }
 async function setOrderStatus(id,status){
   if(!confirm(status==='shipped'?'確認此訂單已出貨？':'確認取消訂單並回補庫存？'))return;
