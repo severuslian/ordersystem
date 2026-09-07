@@ -748,7 +748,7 @@ function setupAutoPing(){
   const FIVE_DAYS = 5 * 24 * 60 * 60 * 1000;
   async function ping(){
     try {
-      await sbFetch('GET','sl_settings','','?id=eq.1&limit=1');
+      await sbClient.functions.invoke('settings-config',{body:{}});
       localStorage.setItem(PING_KEY, Date.now().toString());
       updateSyncStatus();
       console.log('Supabase ping OK:', new Date().toLocaleString());
