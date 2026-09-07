@@ -893,19 +893,15 @@ async function persist(){
       console.log('[SB] Products saved:', ok);
     }
 
-    // Save settings
-    const sr=await sbFetch('POST','sl_settings',[{
-      id: 1,
-      admin_email: settings.adminEmail||null,
-      supplier_code: settings.supplierCode||null,
-      brand: settings.brand||null,
-      stock_threshold: settings.stockThreshold||10,
-      currencies: settings.currencies,
-      channels: settings.channels,
-      updated_at: new Date().toISOString(),
-    }],'');
-    if(sr===null){ ok=false; console.error('[SB] Settings save failed'); }
-    else console.log('[SB] Settings saved');
+    // Save private settings only through the authenticated admin function.
+    if(supplierAccessToken){
+      const {data:sr,error:se}=await sbClient.functions.invoke('admin-settings',{body:{
+        accessToken:supplierAccessToken,
+        settings:{adminEmail:settings.adminEmail||'',supplierCode:settings.supplierCode||'',brand:settings.brand||'',stockThreshold:settings.stockThreshold||10,currencies:settings.currencies,channels:settings.channels}
+      }});
+      if(se||sr?.error){ok=false;console.error('[SB] Settings save failed');}
+      else console.log('[SB] Settings saved');
+    }
 
     // Save categories
     if(categories.length){
@@ -927,7 +923,7 @@ async function persist(){
   return ok;
 }
 
-async function loadFromSupabase(){
+async function loadFromSupabase(accessToken=''){
   showLoading(true);
   try {
     // Load products
@@ -954,15 +950,15 @@ async function loadFromSupabase(){
       localStorage.setItem('cp_products', JSON.stringify(products));
     }
     // Load settings
-    const sets = await sbFetch('GET','sl_settings','','?id=eq.1&limit=1');
-    if(sets && sets.length>0){
-      const s = sets[0];
+    const {data:settingsData,error:settingsError}=await sbClient.functions.invoke('settings-config',{body:{accessToken}});
+    const s=settingsData?.settings;
+    if(!settingsError && s){
       settings = {
-        adminPwd: '',
-        adminEmail: s.admin_email||'severuslian.contact@gmail.com',
-        supplierCode: s.supplier_code||'',
+        adminPwd:'',
+        adminEmail:s.adminEmail||'',
+        supplierCode:s.supplierCode||'',
         brand: s.brand||'',
-        stockThreshold: s.stock_threshold||10,
+        stockThreshold:s.stockThreshold||10,
         currencies: s.currencies||settings.currencies,
         channels: s.channels||[],
       };
@@ -1015,7 +1011,7 @@ async function enterSupplier(){
   document.getElementById('gate').style.display='none';
   document.getElementById('app-supplier').style.display='flex';
   startAutoUpload();
-  loadFromSupabase().then(()=>{
+  loadFromSupabase(supplierAccessToken).then(()=>{
     renderProducts(); renderSettingsForms(); populateExportSelects();
     document.getElementById('set-brand').value=settings.brand||'';
     document.getElementById('set-admin-email').value=settings.adminEmail||'';
@@ -1036,7 +1032,7 @@ async function buyerLogin(){
     document.getElementById('gate').style.display='none';
     document.getElementById('app-buyer').style.display='flex';
     // Refresh product data from Supabase before showing
-    loadFromSupabase().then(()=>{
+    loadFromSupabase(buyerAccessToken).then(()=>{
       // Re-find channel after reload (settings may have updated)
       const freshCh = settings.channels.find(c=>(c.code||'').toUpperCase()===code);
       if(freshCh){
@@ -1529,7 +1525,7 @@ async function saveSettings(){
   if(th) settings.stockThreshold=parseInt(th.value)||10;
   const synced=await persist();
   if(!synced){alert('設定未能完整同步，請稍後再試');return;}
-  const {data,error}=await sbClient.functions.invoke('admin-settings',{body:{accessToken:supplierAccessToken,newPassword:pwd||null,channels:settings.channels}});
+  const {data,error}=await sbClient.functions.invoke('admin-settings',{body:{accessToken:supplierAccessToken,newPassword:pwd||null,syncCredentials:true,settings:{adminEmail:settings.adminEmail||'',supplierCode:settings.supplierCode||'',brand:settings.brand||'',stockThreshold:settings.stockThreshold||10,currencies:settings.currencies,channels:settings.channels}}});
   if(error||data?.error){alert('登入資料更新失敗，請重新登入後再試');return;}
   document.getElementById('set-pwd').value='';
   document.getElementById('set-supplier-code').value='';
@@ -2054,7 +2050,7 @@ async function ensureOrderSaved(){
   if(savedOrderInfo&&savedOrderSignature===signature) return savedOrderInfo;
   const {data,error}=await sbClient.functions.invoke('create-order',{body:{accessToken:buyerAccessToken,channelCode:buyerChannel.code,currencyCode:getBCurr().code,language:buyerLang,items}});
   if(error||data?.error) throw new Error(data?.error||error.message);
-  savedOrderSignature=signature;savedOrderInfo=data.order;await loadFromSupabase();return savedOrderInfo;
+  savedOrderSignature=signature;savedOrderInfo=data.order;await loadFromSupabase(buyerAccessToken);return savedOrderInfo;
 }
 function orderSaveErrorMessage(e){
   const msg=String(e?.message||e||'');
@@ -2851,7 +2847,7 @@ function renderOrderStats(){
 }
 async function setOrderStatus(id,status){
   if(!confirm(status==='shipped'?'確認此訂單已出貨？':'確認取消訂單並回補庫存？'))return;
-  const {data,error}=await sbClient.functions.invoke('admin-orders',{body:{action:'status',orderId:id,status,accessToken:supplierAccessToken}});if(error||data?.error){alert('更新失敗');return;}await loadOrders();await loadFromSupabase();renderProducts();
+  const {data,error}=await sbClient.functions.invoke('admin-orders',{body:{action:'status',orderId:id,status,accessToken:supplierAccessToken}});if(error||data?.error){alert('更新失敗');return;}await loadOrders();await loadFromSupabase(supplierAccessToken);renderProducts();
 }
 
 // ── UTIL ──
