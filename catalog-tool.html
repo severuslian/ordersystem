@@ -248,17 +248,16 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       <button class="gate-tab" onclick="switchTab('buyer',this)">通路商採購 Place Order</button>
     </div>
     <div id="gf-supplier" class="gate-form">
-      <div class="form-group"><label class="form-label">管理員 Email</label>
-        <input class="form-input" id="sup-email" type="email" value="severuslian.contact@gmail.com"></div>
-      <button class="btn btn-primary" onclick="emailLogin('supplier')">寄送登入連結</button>
+      <div class="form-group"><label class="form-label">管理員密碼 Password</label>
+        <input class="form-input" id="sup-pwd" type="password" placeholder="輸入後台密碼" onkeydown="if(event.key==='Enter')supLogin()"></div>
+      <button class="btn btn-primary" onclick="supLogin()">進入後台</button>
       <div class="gate-err" id="sup-err"></div>
-      <div style="font-size:11px;color:var(--hint);text-align:center;">預設密碼：admin123（可在設定中修改）</div>
+      <div style="font-size:11px;color:var(--hint);text-align:center;">請使用後台設定的管理員密碼</div>
     </div>
     <div id="gf-buyer" class="gate-form" style="display:none;">
-      <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="buyer-email" type="email" placeholder="your@email.com"></div>
       <div class="form-group"><label class="form-label">通路商專屬代碼 Store Access Code</label>
         <input class="form-input" id="buyer-code" placeholder="輸入您的專屬代碼" onkeydown="if(event.key==='Enter')buyerLogin()"></div>
-      <button class="btn btn-primary" onclick="emailLogin('buyer')">Email 驗證並進入採購頁面</button>
+      <button class="btn btn-primary" onclick="buyerLogin()">進入採購頁面</button>
       <div class="gate-err" id="buyer-err"></div>
     </div>
   </div>
@@ -322,8 +321,9 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       <div class="content">
         <div class="settings-section">
           <div class="settings-title">🔑 帳號設定</div>
-          <div style="display:grid;grid-template-columns:200px 200px 200px 160px;gap:12px;max-width:800px;">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;max-width:1000px;">
             <div class="form-group"><label class="form-label">後台登入密碼</label><input class="form-input" id="set-pwd" type="password" placeholder="留空則不修改"></div>
+            <div class="form-group"><label class="form-label">管理員 Email <span style="font-size:10px;color:var(--hint);font-weight:400;">（聯絡／通知用）</span></label><input class="form-input" id="set-admin-email" type="email" placeholder="name@example.com"></div>
             <div class="form-group">
               <label class="form-label">供應商登入代碼 <span style="font-size:10px;color:var(--hint);font-weight:400;">（登入頁面用）</span></label>
               <input class="form-input" id="set-supplier-code" placeholder="例：SUP2025" style="font-family:var(--mono);">
@@ -826,7 +826,7 @@ async function restoreBackup(file){
 let products = [];
 let categories = ['紙膠帶','明信片','貼紙','其他'];
 let settings = {
-  adminPwd:'admin123', brand:'', stockThreshold:10,
+  adminPwd:'admin123', adminEmail:'severuslian.contact@gmail.com', brand:'', stockThreshold:10,
   currencies:[
     {name:'台灣',code:'TWD',rate:1},
     {name:'日本',code:'JPY',rate:4.5},
@@ -845,7 +845,7 @@ let settings = {
   ]
 };
 let editingId=null, currentImg=null, currentImgFile=null;
-let buyerChannel=null, orderQtys={}, orders=[], savedOrderSignature='', savedOrderInfo=null;
+let buyerChannel=null, orderQtys={}, orders=[], savedOrderSignature='', savedOrderInfo=null, supplierAccessToken='', buyerAccessToken='';
 let currentCats=[];   // tags being edited in modal
 let activeCatFilter=''; // '' = all
 let dragSrcId=null;
@@ -896,7 +896,7 @@ async function persist(){
     // Save settings
     const sr=await sbFetch('POST','sl_settings',[{
       id: 1,
-      admin_pwd: settings.adminPwd,
+      admin_email: settings.adminEmail||null,
       supplier_code: settings.supplierCode||null,
       brand: settings.brand||null,
       stock_threshold: settings.stockThreshold||10,
@@ -958,7 +958,8 @@ async function loadFromSupabase(){
     if(sets && sets.length>0){
       const s = sets[0];
       settings = {
-        adminPwd: s.admin_pwd||'admin123',
+        adminPwd: '',
+        adminEmail: s.admin_email||'severuslian.contact@gmail.com',
         supplierCode: s.supplier_code||'',
         brand: s.brand||'',
         stockThreshold: s.stock_threshold||10,
@@ -1002,37 +1003,33 @@ function switchTab(role,el){
   document.getElementById('gf-supplier').style.display=role==='supplier'?'flex':'none';
   document.getElementById('gf-buyer').style.display=role==='buyer'?'flex':'none';
 }
-async function emailLogin(role){
-  const email=document.getElementById(role==='supplier'?'sup-email':'buyer-email').value.trim().toLowerCase();
-  if(role==='supplier'&&email!=='severuslian.contact@gmail.com'){document.getElementById('sup-err').textContent='此 Email 沒有管理員權限';return;}
-  if(!email){document.getElementById(role==='supplier'?'sup-err':'buyer-err').textContent='請輸入 Email';return;}
-  const {data:{user}}=await sbClient.auth.getUser();
-  if(user?.email?.toLowerCase()===email){if(role==='supplier')await enterSupplier();else await buyerLogin();return;}
-  localStorage.setItem('sl_pending_role',role);
-  if(role==='buyer') localStorage.setItem('sl_pending_channel',document.getElementById('buyer-code').value.trim().toUpperCase());
-  const {error}=await sbClient.auth.signInWithOtp({email,options:{emailRedirectTo:location.href.split('#')[0]}});
-  if(error){document.getElementById(role==='supplier'?'sup-err':'buyer-err').textContent=error.message;return;}
-  alert('登入連結已寄到 '+email+'，請開啟信件中的連結。');
+async function supLogin(){
+  const pwd=document.getElementById('sup-pwd').value;
+  if(!pwd){document.getElementById('sup-err').textContent='請輸入管理員密碼';return;}
+  const {data,error}=await sbClient.functions.invoke('access-login',{body:{role:'admin',secret:pwd}});
+  if(error||data?.error||!data?.accessToken){document.getElementById('sup-err').textContent='密碼錯誤，請再試一次';return;}
+  supplierAccessToken=data.accessToken;
+  await enterSupplier();
 }
 async function enterSupplier(){
-  const {data:{user}}=await sbClient.auth.getUser();
-  if(user?.email?.toLowerCase()==='severuslian.contact@gmail.com'){
-    document.getElementById('gate').style.display='none';
-    document.getElementById('app-supplier').style.display='flex';
-    startAutoUpload(); // start auto upload every 2 min
-    // Refresh from Supabase on login
-    loadFromSupabase().then(()=>{
-      renderProducts(); renderSettingsForms(); populateExportSelects();
-      document.getElementById('set-brand').value=settings.brand||'';
-      document.getElementById('set-supplier-code').placeholder=settings.supplierCode?`目前：${settings.supplierCode}`:'例：SUP2025';
-      const th=document.getElementById('set-threshold'); if(th) th.value=settings.stockThreshold||10;
-    });
-  } else { document.getElementById('sup-err').textContent='此帳號沒有管理員權限'; }
+  document.getElementById('gate').style.display='none';
+  document.getElementById('app-supplier').style.display='flex';
+  startAutoUpload();
+  loadFromSupabase().then(()=>{
+    renderProducts(); renderSettingsForms(); populateExportSelects();
+    document.getElementById('set-brand').value=settings.brand||'';
+    document.getElementById('set-admin-email').value=settings.adminEmail||'';
+    document.getElementById('set-supplier-code').placeholder=settings.supplierCode?`目前：${settings.supplierCode}`:'例：SUP2025';
+    const th=document.getElementById('set-threshold'); if(th) th.value=settings.stockThreshold||10;
+  });
 }
 async function buyerLogin(){
-  const {data:{user}}=await sbClient.auth.getUser(); if(!user?.email){return;}
-  const code=(document.getElementById('buyer-code').value||localStorage.getItem('sl_pending_channel')||'').trim().toUpperCase();
-  const ch=settings.channels.find(c=>(c.code||'').toUpperCase()===code);
+  const code=document.getElementById('buyer-code').value.trim().toUpperCase();
+  if(!code){document.getElementById('buyer-err').textContent='請輸入通路商專屬代碼';return;}
+  const {data,error}=await sbClient.functions.invoke('access-login',{body:{role:'buyer',secret:code}});
+  if(error||data?.error||!data?.accessToken){document.getElementById('buyer-err').textContent='找不到此代碼，請確認後再試';return;}
+  buyerAccessToken=data.accessToken;
+  const ch=settings.channels.find(c=>(c.code||'').toUpperCase()===code)||data.channel;
   if(ch){
     buyerChannel=ch; orderQtys={};
     buyerLang=ch.lang || (code==='B2B' ? 'en' : 'zh');
@@ -1051,12 +1048,13 @@ async function buyerLogin(){
   } else { document.getElementById('buyer-err').textContent='找不到此代碼，請確認後再試'; }
 }
 async function logout(){
-  await sbClient.auth.signOut();
+  supplierAccessToken=''; buyerAccessToken='';
   stopAutoUpload(); // stop auto upload on logout
   document.getElementById('app-supplier').style.display='none';
   document.getElementById('app-buyer').style.display='none';
   document.getElementById('gate').style.display='flex';
   document.getElementById('buyer-code').value='';
+  const supPwd=document.getElementById('sup-pwd'); if(supPwd) supPwd.value='';
   document.getElementById('sup-err').textContent='';
   document.getElementById('buyer-err').textContent='';
   document.body.style.fontFamily="'Noto Sans TC',sans-serif";
@@ -1068,7 +1066,7 @@ function showPage(page,el){
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   document.getElementById('sup-page-'+page).classList.add('active');
   if(el) el.classList.add('active');
-  if(page==='settings'){renderSettingsForms(); document.getElementById('set-brand').value=settings.brand||''; document.getElementById('set-supplier-code').placeholder=settings.supplierCode?`目前：${settings.supplierCode}`:'例：SUP2025'; const th=document.getElementById('set-threshold'); if(th) th.value=settings.stockThreshold||10; updateSyncStatus();}
+  if(page==='settings'){renderSettingsForms(); document.getElementById('set-brand').value=settings.brand||''; document.getElementById('set-admin-email').value=settings.adminEmail||''; document.getElementById('set-supplier-code').placeholder=settings.supplierCode?`目前：${settings.supplierCode}`:'例：SUP2025'; const th=document.getElementById('set-threshold'); if(th) th.value=settings.stockThreshold||10; updateSyncStatus();}
   if(page==='export'){populateExportSelects(); renderCatalog();}
   if(page==='categories'){renderCategoryManagePage();}
   if(page==='orders'){loadOrders();}
@@ -1468,9 +1466,11 @@ function renderSettingsForms(){
         <input class="form-input" style="flex:1;font-weight:500;" value="${x(c.name)}" placeholder="通路商名稱" oninput="settings.channels[${i}].name=this.value">
         <button class="btn btn-sm btn-danger" onclick="settings.channels.splice(${i},1);renderSettingsForms()">刪除</button>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px;">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:10px;">
         <div class="form-group"><label class="form-label">專屬登入代碼</label>
           <input class="form-input" value="${x(c.code||'')}" placeholder="例：AMZ001" style="font-family:var(--mono);" oninput="settings.channels[${i}].code=this.value.toUpperCase()"></div>
+        <div class="form-group"><label class="form-label">通路商 Email <span style="font-size:10px;color:var(--hint);font-weight:400;">（聯絡／通知用）</span></label>
+          <input class="form-input" type="email" value="${x(c.email||'')}" placeholder="buyer@example.com" oninput="settings.channels[${i}].email=this.value.trim()"></div>
         <div class="form-group"><label class="form-label">預設顯示貨幣</label>
           <select class="form-select" onchange="settings.channels[${i}].defaultCurrency=this.value">
             ${settings.currencies.map(cur=>`<option value="${cur.code}" ${(c.defaultCurrency||'TWD')===cur.code?'selected':''}>${cur.name}（${cur.code}）</option>`).join('')}
@@ -1518,16 +1518,19 @@ function feeRow(ci,fi,f){return `<tr>
 </tr>`;}
 function addFee(ci){if(!settings.channels[ci].fees)settings.channels[ci].fees=[];settings.channels[ci].fees.push({label:'',type:'pct',value:0,note:''});renderSettingsForms();}
 function addCurrency(){settings.currencies.push({name:'',code:'',rate:1});renderSettingsForms();}
-function addChannel(){settings.channels.push({name:'新通路商',code:'',defaultCurrency:'TWD',fees:[{label:'平台抽成',type:'pct',value:0,note:''}]});renderSettingsForms();}
+function addChannel(){settings.channels.push({name:'新通路商',code:'',email:'',defaultCurrency:'TWD',lang:'zh',fees:[{label:'平台抽成',type:'pct',value:0,note:''}]});renderSettingsForms();}
 async function saveSettings(){
   const pwd=document.getElementById('set-pwd').value;
-  if(pwd) settings.adminPwd=pwd;
   const code=document.getElementById('set-supplier-code').value.trim();
   if(code) settings.supplierCode=code;
+  settings.adminEmail=document.getElementById('set-admin-email').value.trim();
   settings.brand=document.getElementById('set-brand').value.trim();
   const th=document.getElementById('set-threshold');
   if(th) settings.stockThreshold=parseInt(th.value)||10;
-  persist();
+  const synced=await persist();
+  if(!synced){alert('設定未能完整同步，請稍後再試');return;}
+  const {data,error}=await sbClient.functions.invoke('admin-settings',{body:{accessToken:supplierAccessToken,newPassword:pwd||null,channels:settings.channels}});
+  if(error||data?.error){alert('登入資料更新失敗，請重新登入後再試');return;}
   document.getElementById('set-pwd').value='';
   document.getElementById('set-supplier-code').value='';
   document.getElementById('set-supplier-code').placeholder=settings.supplierCode?`目前：${settings.supplierCode}`:'例：SUP2025';
@@ -2049,7 +2052,7 @@ function orderPayload(){
 async function ensureOrderSaved(){
   const items=orderPayload(); const signature=JSON.stringify(items)+getBCurr().code+buyerChannel.code;
   if(savedOrderInfo&&savedOrderSignature===signature) return savedOrderInfo;
-  const {data,error}=await sbClient.functions.invoke('create-order',{body:{channelCode:buyerChannel.code,currencyCode:getBCurr().code,language:buyerLang,items}});
+  const {data,error}=await sbClient.functions.invoke('create-order',{body:{accessToken:buyerAccessToken,channelCode:buyerChannel.code,currencyCode:getBCurr().code,language:buyerLang,items}});
   if(error||data?.error) throw new Error(data?.error||error.message);
   savedOrderSignature=signature;savedOrderInfo=data.order;await loadFromSupabase();return savedOrderInfo;
 }
@@ -2828,8 +2831,8 @@ function setLang(lang){
 
 // ── ORDERS & STATS ──
 async function loadOrders(){
-  const {data,error}=await sbClient.functions.invoke('admin-orders',{body:{action:'list'}});
-  if(error||data?.error){document.getElementById('orders-list').innerHTML='<div class="empty-state"><p>訂單載入失敗，請重新登入</p></div>';return;}
+  const {data,error}=await sbClient.functions.invoke('admin-orders',{body:{action:'list',accessToken:supplierAccessToken}});
+  if(error||data?.error){document.getElementById('orders-list').innerHTML='<div class="empty-state"><p>訂單載入失敗，請重新登入後台</p></div>';return;}
   orders=data.orders||[];renderOrderStats();
 }
 function filteredOrders(){
@@ -2848,7 +2851,7 @@ function renderOrderStats(){
 }
 async function setOrderStatus(id,status){
   if(!confirm(status==='shipped'?'確認此訂單已出貨？':'確認取消訂單並回補庫存？'))return;
-  const {data,error}=await sbClient.functions.invoke('admin-orders',{body:{action:'status',orderId:id,status}});if(error||data?.error){alert('更新失敗');return;}await loadOrders();await loadFromSupabase();renderProducts();
+  const {data,error}=await sbClient.functions.invoke('admin-orders',{body:{action:'status',orderId:id,status,accessToken:supplierAccessToken}});if(error||data?.error){alert('更新失敗');return;}await loadOrders();await loadFromSupabase();renderProducts();
 }
 
 // ── UTIL ──
@@ -2913,14 +2916,6 @@ function x(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').re
     renderProducts();
   }
   document.getElementById('gate').style.display = 'flex';
-  const {data:{session}}=await sbClient.auth.getSession();
-  if(session){
-    const role=localStorage.getItem('sl_pending_role');
-    if(role==='buyer'){
-      document.getElementById('buyer-code').value=localStorage.getItem('sl_pending_channel')||'';
-      await buyerLogin();
-    } else if(session.user.email?.toLowerCase()==='severuslian.contact@gmail.com') await enterSupplier();
-  }
   setupAutoPing();
   setupAutoBackup();
 })();
