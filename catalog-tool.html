@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 <title>SEVERUS LIAN Order System</title>
-<meta name="build-version" content="20260424-storage-original">
+<meta name="build-version" content="20260914-order-quantity-edit">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -138,6 +138,12 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 .fee-table tr:not(:last-child) td{border-bottom:1px solid var(--border);}
 .fi{font-size:12px;padding:4px 6px;}
 .ch-sum{margin-top:9px;padding-top:9px;border-top:1px solid var(--border);font-size:12px;color:var(--muted);display:flex;gap:12px;flex-wrap:wrap;}
+.order-edit-table{width:100%;border-collapse:collapse;font-size:13px;}
+.order-edit-table th{padding:7px 8px;text-align:left;font-size:10px;font-weight:600;color:var(--hint);border-bottom:1px solid var(--border);text-transform:uppercase;letter-spacing:.4px;}
+.order-edit-table td{padding:10px 8px;border-bottom:1px solid var(--border);vertical-align:middle;}
+.order-edit-table .qty-input{width:82px;font-size:14px;font-weight:600;}
+.order-edit-note{padding:11px 13px;margin-bottom:14px;border-radius:var(--rs);background:var(--surface2);color:var(--muted);font-size:12px;line-height:1.7;}
+.order-edit-summary{display:flex;justify-content:flex-end;gap:24px;margin-top:14px;padding:12px 14px;background:var(--accent-l);border-radius:var(--rs);font-size:13px;}
 
 /* catalog */
 .export-config{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px 20px;margin-bottom:16px;}
@@ -649,6 +655,25 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
   </div>
 </div>
 
+<!-- Admin Order Quantity Edit Modal -->
+<div class="modal-overlay hidden" id="order-edit-modal">
+  <div class="modal" style="max-width:760px;">
+    <div class="modal-header">
+      <div class="modal-title" id="order-edit-title">✏️ 調整訂單數量</div>
+      <button class="modal-close" onclick="closeOrderEditModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="order-edit-note">增加數量會扣除庫存；減少數量會回補庫存。數量設為 0 會從訂單移除該品項，整張訂單至少需保留 1 件商品。</div>
+      <div id="order-edit-body"></div>
+      <div class="order-edit-summary" id="order-edit-summary"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeOrderEditModal()">取消</button>
+      <button class="btn btn-primary" id="order-edit-save" onclick="saveOrderItemQuantities(this)">儲存並同步庫存</button>
+    </div>
+  </div>
+</div>
+
 <div id="pdf-overlay">
   <div class="pdf-toolbar">
     <span id="pdf-overlay-title">📄 預覽</span>
@@ -846,7 +871,7 @@ let settings = {
   ]
 };
 let editingId=null, currentImg=null, currentImgFile=null;
-let buyerChannel=null, orderQtys={}, orders=[], savedOrderSignature='', savedOrderInfo=null, supplierAccessToken='', buyerAccessToken='';
+let buyerChannel=null, orderQtys={}, orders=[], savedOrderSignature='', savedOrderInfo=null, supplierAccessToken='', buyerAccessToken='', editingOrderId='';
 let currentCats=[];   // tags being edited in modal
 let activeCatFilter=''; // '' = all
 let dragSrcId=null;
@@ -2846,7 +2871,7 @@ function updateOrderReminder(){
 }
 function orderActionButtons(o){
   const pdf=`<button class="btn btn-sm" onclick="viewAdminOrderPdf('${o.id}')">查看 PDF</button> <button class="btn btn-sm btn-primary" onclick="downloadAdminOrderPdf('${o.id}',this)">下載 PDF</button>`;
-  if(o.status==='pending') return `${pdf}<br><button class="btn btn-sm btn-ok" style="margin-top:5px;" onclick="setOrderStatus('${o.id}','shipped')">已出貨</button> <button class="btn btn-sm btn-danger" style="margin-top:5px;" onclick="setOrderStatus('${o.id}','cancelled')">取消訂單</button>`;
+  if(o.status==='pending') return `${pdf}<br><button class="btn btn-sm" style="margin-top:5px;" onclick="openOrderEditModal('${o.id}')">✏️ 調整數量</button> <button class="btn btn-sm btn-ok" style="margin-top:5px;" onclick="setOrderStatus('${o.id}','shipped')">已出貨</button> <button class="btn btn-sm btn-danger" style="margin-top:5px;" onclick="setOrderStatus('${o.id}','cancelled')">取消訂單</button>`;
   if(o.status==='shipped') return `${pdf}<br><button class="btn btn-sm btn-danger" style="margin-top:5px;" onclick="setOrderStatus('${o.id}','cancelled')">取消出貨並回補庫存</button>`;
   return pdf;
 }
@@ -2867,6 +2892,67 @@ async function downloadAdminOrderPdf(id,btn){
   const o=orders.find(v=>v.id===id);if(!o){alert('找不到此訂單');return;}
   openPdfOverlay(buildAdminOrderPdfHtml(o),`${o.order_no} — ${o.channel_name}`);
   await captureToPdf(document.getElementById('pdf-print-area'),`${o.order_no}_${String(o.channel_name||'Order').replace(/[^\w\u3400-\u9fff-]+/g,'_')}`,btn);
+}
+function openOrderEditModal(id){
+  const o=orders.find(v=>v.id===id);
+  if(!o){alert('找不到此訂單');return;}
+  if(o.status!=='pending'){alert('只有待出貨的訂單可以調整數量');return;}
+  editingOrderId=id;
+  document.getElementById('order-edit-title').textContent=`✏️ 調整訂單數量｜${o.order_no}`;
+  const productMap=Object.fromEntries(products.map(p=>[String(p.id),p]));
+  document.getElementById('order-edit-body').innerHTML=`<table class="order-edit-table"><thead><tr><th>商品名稱</th><th>條碼 / SKU</th><th>目前訂購</th><th>可用庫存</th><th>新數量</th></tr></thead><tbody>${(o.items||[]).map((i,index)=>{
+    const p=productMap[String(i.productId)],stock=p?.stock;
+    const stockText=stock==null?'未限制':Number(stock).toLocaleString();
+    const max=stock==null?'':`max="${Number(i.qty||0)+Math.max(0,Number(stock||0))}"`;
+    return `<tr><td><strong>${x(i.nameEn||i.name||'—')}</strong>${i.name&&i.nameEn?`<br><span style="font-size:11px;color:var(--hint)">${x(i.name)}</span>`:''}</td><td class="bc">${x(i.barcode||'—')}</td><td>${Number(i.qty||0)}</td><td>${stockText}</td><td><input class="qty-input admin-order-qty" type="number" min="0" step="1" ${max} value="${Number(i.qty||0)}" data-index="${index}" data-product-id="${x(String(i.productId||''))}" data-old-qty="${Number(i.qty||0)}" oninput="renderOrderEditSummary()"></td></tr>`;
+  }).join('')}</tbody></table>`;
+  document.getElementById('order-edit-modal').classList.remove('hidden');
+  renderOrderEditSummary();
+}
+function closeOrderEditModal(){
+  editingOrderId='';
+  document.getElementById('order-edit-modal').classList.add('hidden');
+}
+function renderOrderEditSummary(){
+  const o=orders.find(v=>v.id===editingOrderId);if(!o)return;
+  let qty=0,total=0,totalTwd=0;
+  document.querySelectorAll('.admin-order-qty').forEach(input=>{
+    const i=(o.items||[])[Number(input.dataset.index)],n=Math.max(0,Math.floor(Number(input.value)||0));
+    qty+=n;total+=Number(i?.unitAmount||0)*n;totalTwd+=Number(i?.unitTwd||0)*n;
+  });
+  document.getElementById('order-edit-summary').innerHTML=`<span>更新後總件數：<strong>${qty}</strong></span><span>更新後金額：<strong>${x(o.currency_code)} ${total.toLocaleString(undefined,{maximumFractionDigits:2})}</strong>${o.currency_code!=='TWD'?` <small>（NT$ ${Math.round(totalTwd).toLocaleString()}）</small>`:''}</span>`;
+}
+async function saveOrderItemQuantities(btn){
+  const o=orders.find(v=>v.id===editingOrderId);if(!o||o.status!=='pending'){alert('此訂單已無法編輯');return;}
+  const inputs=[...document.querySelectorAll('.admin-order-qty')];
+  const items=[];
+  for(const input of inputs){
+    const raw=String(input.value).trim(),qty=Number(raw);
+    if(raw===''||!Number.isInteger(qty)||qty<0){alert('數量必須是 0 或正整數');input.focus();return;}
+    if(input.max!==''&&qty>Number(input.max)){alert('增加的數量超過目前可用庫存');input.focus();return;}
+    items.push({productId:input.dataset.productId,qty});
+  }
+  if(!items.some(i=>i.qty>0)){alert('整張訂單至少需要保留 1 件商品');return;}
+  const changed=items.some((i,index)=>i.qty!==Number(o.items[index]?.qty||0));
+  if(!changed){closeOrderEditModal();return;}
+  if(!confirm('確認儲存新數量並同步調整庫存？'))return;
+  const oldText=btn.textContent;btn.disabled=true;btn.textContent='儲存中…';
+  try{
+    const {data,error}=await sbClient.functions.invoke('admin-orders',{body:{action:'update-items',orderId:o.id,items,accessToken:supplierAccessToken}});
+    if(error||data?.error){
+      const code=data?.error||'';
+      if(code==='INSUFFICIENT_STOCK')throw new Error('增加的數量超過目前可用庫存，請重新整理後再試');
+      if(code==='ORDER_NOT_EDITABLE')throw new Error('此訂單已出貨或取消，無法再調整數量');
+      if(code==='EMPTY_ORDER')throw new Error('整張訂單至少需要保留 1 件商品');
+      throw new Error('訂單更新失敗，請重新整理後再試');
+    }
+    closeOrderEditModal();
+    await loadOrders(true);
+    await loadFromSupabase(supplierAccessToken);
+    renderProducts();
+    showToast('✅ 訂單數量與庫存已同步更新');
+  }catch(e){alert(e.message||'更新失敗');}
+  finally{btn.disabled=false;btn.textContent=oldText;}
 }
 function filteredOrders(){
   const from=document.getElementById('order-date-from')?.value,to=document.getElementById('order-date-to')?.value;
