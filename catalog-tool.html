@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 <title>SEVERUS LIAN Order System</title>
-<meta name="build-version" content="20260914-order-list-product-preview">
+<meta name="build-version" content="20260914-admin-order-thumbnails">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -2937,15 +2937,17 @@ function openOrderEditModal(id){
 function renderOrderEditItems(){
   const o=orders.find(v=>v.id===editingOrderId);if(!o)return;
   const productMap=Object.fromEntries(products.map(p=>[String(p.id),p]));
-  document.getElementById('order-edit-body').innerHTML=`<table class="order-edit-table"><thead><tr><th>商品名稱</th><th>條碼 / SKU</th><th>原數量</th><th>可用庫存</th><th>新數量</th></tr></thead><tbody>${editingOrderItems.map((i,index)=>{
+  document.getElementById('order-edit-body').innerHTML=`<div style="overflow-x:auto;"><table class="order-edit-table"><thead><tr><th style="width:66px;">縮圖</th><th>商品名稱</th><th>條碼 / SKU</th><th>原數量</th><th>可用庫存</th><th>新數量</th></tr></thead><tbody>${editingOrderItems.map((i,index)=>{
     const p=productMap[String(i.productId)],stock=p?.stock;
     const stockText=stock==null?'未限制':Number(stock).toLocaleString();
     const max=stock==null?'':`max="${Number(i._originalQty||0)+Math.max(0,Number(stock||0))}"`;
-    return `<tr><td><strong>${x(i.nameEn||i.name||'—')}</strong>${i.name&&i.nameEn?`<br><span style="font-size:11px;color:var(--hint)">${x(i.name)}</span>`:''}</td><td class="bc">${x(i.barcode||'—')}</td><td>${i._originalQty?Number(i._originalQty):'<span class="tag">新增</span>'}</td><td>${stockText}</td><td><input class="qty-input admin-order-qty" type="number" min="0" step="1" ${max} value="${Number(i.qty||0)}" data-index="${index}" oninput="renderOrderEditSummary()"></td></tr>`;
-  }).join('')}</tbody></table>`;
+    const img=i.img||p?.img||'',primary=i.name||p?.name||i.nameEn||p?.nameEn||'—',secondary=i.nameEn||p?.nameEn||'';
+    const image=img?`<img class="admin-order-product-img" src="${x(img)}" crossorigin="anonymous" referrerpolicy="no-referrer" alt="">`:'<div class="admin-order-product-img-ph">📦</div>';
+    return `<tr><td>${image}</td><td><div class="admin-order-product-name">${x(primary)}</div>${secondary&&secondary!==primary?`<div class="admin-order-product-sub">${x(secondary)}</div>`:''}</td><td class="bc">${x(i.barcode||p?.barcode||'—')}</td><td>${i._originalQty?Number(i._originalQty):'<span class="tag">新增</span>'}</td><td>${stockText}</td><td><input class="qty-input admin-order-qty" type="number" min="0" step="1" ${max} value="${Number(i.qty||0)}" data-index="${index}" oninput="renderOrderEditSummary()"></td></tr>`;
+  }).join('')}</tbody></table></div>`;
   const included=new Set(editingOrderItems.map(i=>String(i.productId)));
   const available=products.filter(p=>!included.has(String(p.id)));
-  document.getElementById('order-edit-add').innerHTML=`<div class="order-edit-add-row"><div class="form-group"><label class="form-label">追加其他商品</label><select class="form-select" id="order-edit-product-select"><option value="">選擇商品名稱或條碼…</option>${available.map(p=>`<option value="${x(String(p.id))}" ${isOutOfStock(p)?'disabled':''}>${x(p.nameEn||p.name)}${p.barcode?'｜'+x(p.barcode):''}${p.stock!=null?'｜庫存 '+Number(p.stock):''}${isOutOfStock(p)?'（無庫存）':''}</option>`).join('')}</select></div><button class="btn" type="button" onclick="addProductToOrderEdit()">＋ 加入商品</button></div>${available.length?'':'<div style="font-size:12px;color:var(--hint);">所有商品都已在這張訂單中</div>'}`;
+  document.getElementById('order-edit-add').innerHTML=`<div class="order-edit-add-row"><div class="form-group"><label class="form-label">追加其他商品</label><select class="form-select" id="order-edit-product-select"><option value="">選擇中文商品名稱或條碼…</option>${available.map(p=>`<option value="${x(String(p.id))}" ${isOutOfStock(p)?'disabled':''}>${x(p.name||p.nameEn)}${p.nameEn&&p.nameEn!==p.name?'｜'+x(p.nameEn):''}${p.barcode?'｜'+x(p.barcode):''}${p.stock!=null?'｜庫存 '+Number(p.stock):''}${isOutOfStock(p)?'（無庫存）':''}</option>`).join('')}</select></div><button class="btn" type="button" onclick="addProductToOrderEdit()">＋ 加入商品</button></div>${available.length?'':'<div style="font-size:12px;color:var(--hint);">所有商品都已在這張訂單中</div>'}`;
   renderOrderEditSummary();
 }
 function closeOrderEditModal(){
@@ -3026,9 +3028,10 @@ function renderOrderStats(){
   const list=filteredOrders(),active=list.filter(o=>o.status!=='cancelled');
   const qty=active.reduce((s,o)=>s+Number(o.total_qty||0),0),twd=active.reduce((s,o)=>s+Number(o.total_twd||0),0);
   document.getElementById('order-stats-summary').innerHTML=`<div class="stat-pill"><div class="stat-val">${list.length}</div><div class="stat-lbl">訂單數</div></div><div class="stat-pill"><div class="stat-val">${active.length}</div><div class="stat-lbl">有效訂單</div></div><div class="stat-pill"><div class="stat-val">${qty}</div><div class="stat-lbl">總下單件數</div></div><div class="stat-pill"><div class="stat-val">NT$ ${Math.round(twd).toLocaleString()}</div><div class="stat-lbl">有效訂單總額</div></div>`;
-  const sums={};active.forEach(o=>(o.items||[]).forEach(i=>{const k=i.productId;sums[k]??={name:i.nameEn||i.name||k,barcode:i.barcode||'',qty:0};sums[k].qty+=Number(i.qty||0)}));
+  const productMap=Object.fromEntries(products.map(p=>[String(p.id),p]));
+  const sums={};active.forEach(o=>(o.items||[]).forEach(i=>{const k=String(i.productId||''),p=productMap[k]||{};sums[k]??={name:i.name||i.nameEn||p.name||p.nameEn||k,nameEn:i.nameEn||p.nameEn||'',barcode:i.barcode||p.barcode||'',img:i.img||p.img||'',qty:0};sums[k].qty+=Number(i.qty||0)}));
   const rows=Object.values(sums).sort((a,b)=>b.qty-a.qty);
-  document.getElementById('order-product-stats').innerHTML=rows.length?`<table class="fee-table"><thead><tr><th>商品名稱</th><th>條碼 / SKU</th><th style="width:120px;">累計數量</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${x(r.name)}</td><td class="bc">${x(r.barcode||'—')}</td><td><strong>${r.qty}</strong></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state"><p>此期間尚無有效訂單</p></div>';
+  document.getElementById('order-product-stats').innerHTML=rows.length?`<div style="overflow-x:auto;"><table class="fee-table"><thead><tr><th style="width:66px;">縮圖</th><th>商品名稱</th><th>條碼 / SKU</th><th style="width:120px;">累計數量</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${r.img?`<img class="admin-order-product-img" src="${x(r.img)}" crossorigin="anonymous" referrerpolicy="no-referrer" alt="">`:'<div class="admin-order-product-img-ph">📦</div>'}</td><td><div class="admin-order-product-name">${x(r.name)}</div>${r.nameEn&&r.nameEn!==r.name?`<div class="admin-order-product-sub">${x(r.nameEn)}</div>`:''}</td><td class="bc">${x(r.barcode||'—')}</td><td><strong style="font-size:15px;">${r.qty}</strong></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty-state"><p>此期間尚無有效訂單</p></div>';
   document.getElementById('orders-list').innerHTML=list.length?`<div style="overflow-x:auto;"><table class="fee-table"><thead><tr><th>訂單編號／時間</th><th>通路／聯絡信箱</th><th style="min-width:310px;">商品內容</th><th>金額</th><th>狀態</th><th style="min-width:220px;">操作</th></tr></thead><tbody>${list.map(o=>`<tr><td><strong>${x(o.order_no)}</strong><br><span style="font-size:11px;color:var(--hint)">${new Date(o.created_at).toLocaleString('zh-TW')}</span></td><td>${x(o.channel_name)}<br><span style="font-size:11px">${x(o.buyer_email||'—')}</span></td><td>${renderAdminOrderProducts(o)}</td><td>${x(o.currency_code)} ${Number(o.total_amount).toLocaleString()}<br><span style="font-size:11px;color:var(--hint)">NT$ ${Math.round(Number(o.total_twd)).toLocaleString()}</span></td><td>${o.status==='pending'?'待出貨':o.status==='shipped'?'已出貨':'已取消'}</td><td>${orderActionButtons(o)}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty-state"><p>此期間尚無訂單</p></div>';
 }
 async function setOrderStatus(id,status){
