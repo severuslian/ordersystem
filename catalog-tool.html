@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 <title>SEVERUS LIAN Order System</title>
-<meta name="build-version" content="20260914-top-sales-order-status">
+<meta name="build-version" content="20260914-pdf-meta-layout">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -247,8 +247,17 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
   #pdf-print-area{padding:16px;}
 }
 .pdf-doc{font-family:'Noto Sans TC',sans-serif;font-size:12px;color:#1a1917;background:#fff;padding:24px;}
-.pdf-doc h2{font-size:18px;font-weight:600;margin-bottom:4px;}
+.pdf-doc h2{font-size:18px;font-weight:600;margin:0 0 16px;text-align:center;letter-spacing:.3px;}
+.pdf-doc .pdf-title-en{font-size:12px;font-weight:500;color:#706e68;margin-left:7px;letter-spacing:.2px;}
 .pdf-doc .pdf-meta{font-size:11px;color:#706e68;margin-bottom:20px;}
+.pdf-doc .pdf-meta-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border:1px solid #e0ded7;border-radius:7px;overflow:hidden;background:#faf9f6;}
+.pdf-doc .pdf-meta-item{padding:10px 14px;text-align:center;min-width:0;border-bottom:1px solid #e0ded7;}
+.pdf-doc .pdf-meta-item:nth-child(odd){border-right:1px solid #e0ded7;}
+.pdf-doc .pdf-meta-item:nth-last-child(-n+2){border-bottom:none;}
+.pdf-doc .pdf-meta-label{font-size:9px;font-weight:600;color:#8d877e;letter-spacing:.25px;margin-bottom:3px;white-space:nowrap;}
+.pdf-doc .pdf-meta-label-en{font-size:8px;font-weight:400;margin-left:4px;}
+.pdf-doc .pdf-meta-value{font-size:11px;font-weight:500;color:#35332f;line-height:1.45;overflow-wrap:anywhere;}
+.pdf-doc .pdf-meta-status{display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;}
 .pdf-doc table{width:100%;border-collapse:collapse;font-size:11px;}
 .pdf-doc th{background:#f0efe9;padding:7px 9px;text-align:left;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid #e0ded7;}
 .pdf-doc td{padding:8px 9px;border-bottom:1px solid #e0ded7;vertical-align:top;}
@@ -2918,6 +2927,10 @@ function orderDocLabel(lang,key){
   const english=ORDER_DOC_TEXT.en[key]||key;
   return lang==='en'?x(english):`${x(native)}<br><span style="font-size:8px;font-weight:400;color:#8d877e;text-transform:none;letter-spacing:0;">${x(english)}</span>`;
 }
+function orderMetaLabel(lang,key){
+  const native=(ORDER_DOC_TEXT[lang]||ORDER_DOC_TEXT.en)[key]||ORDER_DOC_TEXT.en[key]||key,english=ORDER_DOC_TEXT.en[key]||key;
+  return lang==='en'?x(english):`${x(native)}<span class="pdf-meta-label-en">/ ${x(english)}</span>`;
+}
 function buildAdminOrderPdfHtml(o){
   const lang=getOrderDocumentLanguage(o),T=ORDER_DOC_TEXT[lang]||ORDER_DOC_TEXT.en,code=o.currency_code||'TWD';
   const sym={TWD:'NT$',JPY:'¥',KRW:'₩',USD:'$',EUR:'€',GBP:'£'}[code]||(code+' '),productMap=Object.fromEntries(products.map(p=>[String(p.id),p]));
@@ -2929,7 +2942,9 @@ function buildAdminOrderPdfHtml(o){
   }).join('');
   const statusNative=T[o.status]||T.cancelled,status=lang==='en'?x(statusNative):`${x(statusNative)} <span style="font-size:9px;color:#8d877e;">${x(ORDER_DOC_TEXT.en[o.status]||'')}</span>`;
   const total=money(o.total_amount),totalTwd=`NT$ ${Math.round(Number(o.total_twd||0)).toLocaleString()}`,locale={zh:'zh-TW',ja:'ja-JP',ko:'ko-KR',en:'en-US'}[lang]||'en-US';
-  return `<div class="pdf-doc"><h2>${settings.brand?x(settings.brand)+' — ':''}${orderDocLabel(lang,'title')}</h2><div class="pdf-meta">${orderDocLabel(lang,'orderNo')}：${x(o.order_no)}<br>${orderDocLabel(lang,'channel')}：${x(o.channel_name)}${o.buyer_email?` &lt;${x(o.buyer_email)}&gt;`:''}<br>${orderDocLabel(lang,'date')}：${new Date(o.created_at).toLocaleString(locale)}<br>${orderDocLabel(lang,'status')}：${status} &nbsp;|&nbsp; ${orderDocLabel(lang,'currency')}：${x(code)}</div><table><thead><tr><th style="width:64px;"></th><th>${orderDocLabel(lang,'product')}</th><th>${orderDocLabel(lang,'barcode')}</th><th>${orderDocLabel(lang,'unit')}</th><th style="text-align:center;">${orderDocLabel(lang,'qty')}</th><th>${orderDocLabel(lang,'subtotal')}</th></tr></thead><tbody>${rows}<tr class="grand"><td colspan="5" style="text-align:right;">${orderDocLabel(lang,'total')}</td><td>${total}${code!=='TWD'?`<br><span class="twd">${totalTwd}</span>`:''}</td></tr></tbody></table><div class="footer">${x(settings.brand||'SEVERUS LIAN')} · ${x(o.order_no)}</div></div>`;
+  const titleNative=T.title||ORDER_DOC_TEXT.en.title,title=lang==='en'?x(titleNative):`${x(titleNative)}<span class="pdf-title-en">${x(ORDER_DOC_TEXT.en.title)}</span>`;
+  const channelValue=`${x(o.channel_name)}${o.buyer_email?` &lt;${x(o.buyer_email)}&gt;`:''}`;
+  return `<div class="pdf-doc"><h2>${settings.brand?x(settings.brand)+' — ':''}${title}</h2><div class="pdf-meta"><div class="pdf-meta-grid"><div class="pdf-meta-item"><div class="pdf-meta-label">${orderMetaLabel(lang,'orderNo')}</div><div class="pdf-meta-value">${x(o.order_no)}</div></div><div class="pdf-meta-item"><div class="pdf-meta-label">${orderMetaLabel(lang,'channel')}</div><div class="pdf-meta-value">${channelValue}</div></div><div class="pdf-meta-item"><div class="pdf-meta-label">${orderMetaLabel(lang,'date')}</div><div class="pdf-meta-value">${new Date(o.created_at).toLocaleString(locale)}</div></div><div class="pdf-meta-item"><div class="pdf-meta-label">${orderMetaLabel(lang,'status')} &nbsp;·&nbsp; ${orderMetaLabel(lang,'currency')}</div><div class="pdf-meta-value pdf-meta-status"><span>${status}</span><span>${x(code)}</span></div></div></div></div><table><thead><tr><th style="width:64px;"></th><th>${orderDocLabel(lang,'product')}</th><th>${orderDocLabel(lang,'barcode')}</th><th>${orderDocLabel(lang,'unit')}</th><th style="text-align:center;">${orderDocLabel(lang,'qty')}</th><th>${orderDocLabel(lang,'subtotal')}</th></tr></thead><tbody>${rows}<tr class="grand"><td colspan="5" style="text-align:right;">${orderDocLabel(lang,'total')}</td><td>${total}${code!=='TWD'?`<br><span class="twd">${totalTwd}</span>`:''}</td></tr></tbody></table><div class="footer">${x(settings.brand||'SEVERUS LIAN')} · ${x(o.order_no)}</div></div>`;
 }
 function viewAdminOrderPdf(id){
   const o=orders.find(v=>v.id===id);if(!o){alert('找不到此訂單');return;}
