@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 <title>SEVERUS LIAN Order System</title>
-<meta name="build-version" content="20260914-compact-order-history">
+<meta name="build-version" content="20260914-sales-stats-page">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -291,7 +291,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     <div class="nav-section">
       <div class="nav-lbl">管理</div>
       <div class="nav-item active" onclick="showPage('products',this)"><span>📋</span> 商品清單</div>
-      <div class="nav-item" id="nav-orders" onclick="showPage('orders',this)"><span>📦</span> 訂單與統計 <span id="order-pending-badge" style="display:none;margin-left:auto;background:var(--err);color:#fff;border-radius:999px;min-width:20px;height:20px;padding:0 6px;align-items:center;justify-content:center;font-size:11px;font-weight:700;">0</span></div>
+      <div class="nav-item" id="nav-orders" onclick="showPage('orders',this)"><span>📦</span> 訂單 <span id="order-pending-badge" style="display:none;margin-left:auto;background:var(--err);color:#fff;border-radius:999px;min-width:20px;height:20px;padding:0 6px;align-items:center;justify-content:center;font-size:11px;font-weight:700;">0</span></div>
+      <div class="nav-item" id="nav-sales" onclick="showPage('sales',this)"><span>📊</span> 銷售統計</div>
       <div class="nav-item" onclick="showPage('categories',this)"><span>🏷️</span> 分類管理</div>
       <div class="nav-item" onclick="showPage('settings',this)"><span>⚙️</span> 設定</div>
     </div>
@@ -323,16 +324,23 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         <div class="product-grid" id="product-grid"></div>
       </div>
     </div>
-    <!-- settings page -->
+    <!-- orders page -->
     <div id="sup-page-orders" class="page">
-      <div class="topbar"><div class="topbar-title">訂單與統計</div><div class="topbar-actions"><button class="btn" onclick="loadOrders()">↻ 重新整理</button></div></div>
+      <div class="topbar"><div class="topbar-title">訂單</div><div class="topbar-actions"><button class="btn" onclick="loadOrders()">↻ 重新整理</button></div></div>
+      <div class="content">
+        <div class="settings-section"><div class="settings-title">訂單紀錄</div><div id="orders-list"></div></div>
+      </div>
+    </div>
+    <!-- sales statistics page -->
+    <div id="sup-page-sales" class="page">
+      <div class="topbar"><div class="topbar-title">銷售統計</div><div class="topbar-actions"><button class="btn" onclick="loadOrders()">↻ 重新整理</button></div></div>
       <div class="content">
         <div class="export-config"><div class="export-row"><div class="export-field"><label class="form-label">開始日期</label><input class="form-input" type="date" id="order-date-from" onchange="renderOrderStats()"></div><div class="export-field"><label class="form-label">結束日期</label><input class="form-input" type="date" id="order-date-to" onchange="renderOrderStats()"></div><button class="btn" onclick="clearOrderDates()">全部期間</button></div></div>
         <div id="order-stats-summary" class="stats-bar" style="margin:16px 0;"></div>
         <div class="settings-section"><div class="settings-title">商品下單數量統計</div><div id="order-product-stats"></div></div>
-        <div class="settings-section"><div class="settings-title">訂單紀錄</div><div id="orders-list"></div></div>
       </div>
     </div>
+    <!-- settings page -->
     <div id="sup-page-settings" class="page">
       <div class="topbar"><div class="topbar-title">設定</div>
         <div class="topbar-actions"><button class="btn btn-primary" onclick="saveSettings()">儲存設定</button></div></div>
@@ -1104,7 +1112,7 @@ function showPage(page,el){
   if(page==='settings'){renderSettingsForms(); document.getElementById('set-brand').value=settings.brand||''; document.getElementById('set-admin-email').value=settings.adminEmail||''; document.getElementById('set-supplier-code').placeholder=settings.supplierCode?`目前：${settings.supplierCode}`:'例：SUP2025'; const th=document.getElementById('set-threshold'); if(th) th.value=settings.stockThreshold||10; updateSyncStatus();}
   if(page==='export'){populateExportSelects(); renderCatalog();}
   if(page==='categories'){renderCategoryManagePage();}
-  if(page==='orders'){loadOrders();}
+  if(page==='orders'||page==='sales'){loadOrders();}
 }
 
 // ── PRODUCTS ──
@@ -3016,14 +3024,14 @@ function filteredOrders(){
 }
 function clearOrderDates(){document.getElementById('order-date-from').value='';document.getElementById('order-date-to').value='';renderOrderStats();}
 function renderOrderStats(){
-  const list=filteredOrders(),active=list.filter(o=>o.status!=='cancelled');
+  const list=filteredOrders(),active=list.filter(o=>o.status!=='cancelled'),orderList=orders;
   const qty=active.reduce((s,o)=>s+Number(o.total_qty||0),0),twd=active.reduce((s,o)=>s+Number(o.total_twd||0),0);
   document.getElementById('order-stats-summary').innerHTML=`<div class="stat-pill"><div class="stat-val">${list.length}</div><div class="stat-lbl">訂單數</div></div><div class="stat-pill"><div class="stat-val">${active.length}</div><div class="stat-lbl">有效訂單</div></div><div class="stat-pill"><div class="stat-val">${qty}</div><div class="stat-lbl">總下單件數</div></div><div class="stat-pill"><div class="stat-val">NT$ ${Math.round(twd).toLocaleString()}</div><div class="stat-lbl">有效訂單總額</div></div>`;
   const productMap=Object.fromEntries(products.map(p=>[String(p.id),p]));
   const sums={};active.forEach(o=>(o.items||[]).forEach(i=>{const k=String(i.productId||''),p=productMap[k]||{};sums[k]??={name:i.name||i.nameEn||p.name||p.nameEn||k,nameEn:i.nameEn||p.nameEn||'',barcode:i.barcode||p.barcode||'',img:i.img||p.img||'',qty:0};sums[k].qty+=Number(i.qty||0)}));
   const rows=Object.values(sums).sort((a,b)=>b.qty-a.qty);
   document.getElementById('order-product-stats').innerHTML=rows.length?`<div style="overflow-x:auto;"><table class="fee-table"><thead><tr><th style="width:66px;">縮圖</th><th>商品名稱</th><th>條碼 / SKU</th><th style="width:120px;">累計數量</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${r.img?`<img class="admin-order-product-img" src="${x(r.img)}" crossorigin="anonymous" referrerpolicy="no-referrer" alt="">`:'<div class="admin-order-product-img-ph">📦</div>'}</td><td><div class="admin-order-product-name">${x(r.name)}</div>${r.nameEn&&r.nameEn!==r.name?`<div class="admin-order-product-sub">${x(r.nameEn)}</div>`:''}</td><td class="bc">${x(r.barcode||'—')}</td><td><strong style="font-size:15px;">${r.qty}</strong></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty-state"><p>此期間尚無有效訂單</p></div>';
-  document.getElementById('orders-list').innerHTML=list.length?`<div style="overflow-x:auto;"><table class="fee-table"><thead><tr><th>訂單編號／時間</th><th>通路／聯絡信箱</th><th>金額</th><th>狀態</th><th style="min-width:220px;">操作</th></tr></thead><tbody>${list.map(o=>`<tr><td><strong>${x(o.order_no)}</strong><br><span style="font-size:11px;color:var(--hint)">${new Date(o.created_at).toLocaleString('zh-TW')}</span></td><td>${x(o.channel_name)}<br><span style="font-size:11px">${x(o.buyer_email||'—')}</span></td><td><strong>${x(o.currency_code)} ${Number(o.total_amount).toLocaleString()}</strong><br><span style="font-size:11px;color:var(--hint)">NT$ ${Math.round(Number(o.total_twd)).toLocaleString()}</span></td><td>${o.status==='pending'?'待出貨':o.status==='shipped'?'已出貨':'已取消'}</td><td>${orderActionButtons(o)}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty-state"><p>此期間尚無訂單</p></div>';
+  document.getElementById('orders-list').innerHTML=orderList.length?`<div style="overflow-x:auto;"><table class="fee-table"><thead><tr><th>訂單編號／時間</th><th>通路／聯絡信箱</th><th>金額</th><th>狀態</th><th style="min-width:220px;">操作</th></tr></thead><tbody>${orderList.map(o=>`<tr><td><strong>${x(o.order_no)}</strong><br><span style="font-size:11px;color:var(--hint)">${new Date(o.created_at).toLocaleString('zh-TW')}</span></td><td>${x(o.channel_name)}<br><span style="font-size:11px">${x(o.buyer_email||'—')}</span></td><td><strong>${x(o.currency_code)} ${Number(o.total_amount).toLocaleString()}</strong><br><span style="font-size:11px;color:var(--hint)">NT$ ${Math.round(Number(o.total_twd)).toLocaleString()}</span></td><td>${o.status==='pending'?'待出貨':o.status==='shipped'?'已出貨':'已取消'}</td><td>${orderActionButtons(o)}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty-state"><p>目前尚無訂單</p></div>';
 }
 async function setOrderStatus(id,status){
   if(!confirm(status==='shipped'?'確認此訂單已出貨？':'確認取消訂單並回補庫存？'))return;
