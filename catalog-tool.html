@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 <title>SEVERUS LIAN Order System</title>
-<meta name="build-version" content="20260914-order-quantity-edit">
+<meta name="build-version" content="20260914-order-add-products">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -144,6 +144,9 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 .order-edit-table .qty-input{width:82px;font-size:14px;font-weight:600;}
 .order-edit-note{padding:11px 13px;margin-bottom:14px;border-radius:var(--rs);background:var(--surface2);color:var(--muted);font-size:12px;line-height:1.7;}
 .order-edit-summary{display:flex;justify-content:flex-end;gap:24px;margin-top:14px;padding:12px 14px;background:var(--accent-l);border-radius:var(--rs);font-size:13px;}
+.order-edit-add{margin-top:16px;padding:13px 14px;border:1px dashed var(--border);border-radius:var(--rs);background:var(--surface);}
+.order-edit-add-row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;}
+.order-edit-add-row .form-group{flex:1;min-width:240px;}
 
 /* catalog */
 .export-config{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px 20px;margin-bottom:16px;}
@@ -663,8 +666,9 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       <button class="modal-close" onclick="closeOrderEditModal()">✕</button>
     </div>
     <div class="modal-body">
-      <div class="order-edit-note">增加數量會扣除庫存；減少數量會回補庫存。數量設為 0 會從訂單移除該品項，整張訂單至少需保留 1 件商品。</div>
+      <div class="order-edit-note">可調整原有數量，也可以追加其他商品。增加或追加會扣除庫存；減少會回補庫存。數量設為 0 會移除該品項，整張訂單至少需保留 1 件商品。</div>
       <div id="order-edit-body"></div>
+      <div id="order-edit-add" class="order-edit-add"></div>
       <div class="order-edit-summary" id="order-edit-summary"></div>
     </div>
     <div class="modal-footer">
@@ -871,7 +875,7 @@ let settings = {
   ]
 };
 let editingId=null, currentImg=null, currentImgFile=null;
-let buyerChannel=null, orderQtys={}, orders=[], savedOrderSignature='', savedOrderInfo=null, supplierAccessToken='', buyerAccessToken='', editingOrderId='';
+let buyerChannel=null, orderQtys={}, orders=[], savedOrderSignature='', savedOrderInfo=null, supplierAccessToken='', buyerAccessToken='', editingOrderId='', editingOrderItems=[];
 let currentCats=[];   // tags being edited in modal
 let activeCatFilter=''; // '' = all
 let dragSrcId=null;
@@ -2875,14 +2879,33 @@ function orderActionButtons(o){
   if(o.status==='shipped') return `${pdf}<br><button class="btn btn-sm btn-danger" style="margin-top:5px;" onclick="setOrderStatus('${o.id}','cancelled')">取消出貨並回補庫存</button>`;
   return pdf;
 }
+const ORDER_DOC_TEXT={
+  en:{title:'Purchase Order',orderNo:'Order No.',channel:'Channel',date:'Order Date',status:'Status',currency:'Currency',product:'Product',barcode:'Barcode / SKU',unit:'Unit Price',qty:'Qty',subtotal:'Subtotal',total:'Order Total',pending:'Pending shipment',shipped:'Shipped',cancelled:'Cancelled'},
+  zh:{title:'採購訂單',orderNo:'訂單編號',channel:'通路商',date:'下單時間',status:'狀態',currency:'貨幣',product:'商品名稱',barcode:'條碼 / SKU',unit:'單價',qty:'數量',subtotal:'小計',total:'訂單總額',pending:'待出貨',shipped:'已出貨',cancelled:'已取消'},
+  ja:{title:'発注書',orderNo:'注文番号',channel:'販売チャネル',date:'注文日時',status:'ステータス',currency:'通貨',product:'商品名',barcode:'バーコード / SKU',unit:'単価',qty:'数量',subtotal:'小計',total:'注文合計',pending:'出荷待ち',shipped:'出荷済み',cancelled:'キャンセル済み'},
+  ko:{title:'구매 주문서',orderNo:'주문 번호',channel:'판매 채널',date:'주문 일시',status:'상태',currency:'통화',product:'상품명',barcode:'바코드 / SKU',unit:'단가',qty:'수량',subtotal:'소계',total:'주문 합계',pending:'배송 대기',shipped:'배송 완료',cancelled:'취소됨'}
+};
+function getOrderDocumentLanguage(o){
+  const ch=(settings.channels||[]).find(c=>String(c.code||'').toUpperCase()===String(o.channel_code||'').toUpperCase());
+  return ch?.lang||o.language||'en';
+}
+function orderDocLabel(lang,key){
+  const native=(ORDER_DOC_TEXT[lang]||ORDER_DOC_TEXT.en)[key]||ORDER_DOC_TEXT.en[key]||key;
+  const english=ORDER_DOC_TEXT.en[key]||key;
+  return lang==='en'?x(english):`${x(native)}<br><span style="font-size:8px;font-weight:400;color:#8d877e;text-transform:none;letter-spacing:0;">${x(english)}</span>`;
+}
 function buildAdminOrderPdfHtml(o){
-  const isEn=o.language!=='zh',code=o.currency_code||'TWD';
-  const sym={TWD:'NT$',JPY:'¥',KRW:'₩',USD:'$',EUR:'€',GBP:'£'}[code]||(code+' ');
+  const lang=getOrderDocumentLanguage(o),T=ORDER_DOC_TEXT[lang]||ORDER_DOC_TEXT.en,code=o.currency_code||'TWD';
+  const sym={TWD:'NT$',JPY:'¥',KRW:'₩',USD:'$',EUR:'€',GBP:'£'}[code]||(code+' '),productMap=Object.fromEntries(products.map(p=>[String(p.id),p]));
   const money=v=>sym+Number(v||0).toLocaleString(undefined,{maximumFractionDigits:2});
-  const rows=(o.items||[]).map(i=>`<tr><td>${x(isEn?(i.nameEn||i.name):(i.name||i.nameEn))}</td><td>${x(i.barcode||'—')}</td><td>${money(i.unitAmount)}</td><td style="text-align:center;">${Number(i.qty||0)}</td><td class="price">${money(i.subtotal!=null?i.subtotal:Number(i.unitAmount||0)*Number(i.qty||0))}${code!=='TWD'?`<br><span class="twd">NT$ ${Math.round(Number(i.subtotalTwd||0)).toLocaleString()}</span>`:''}</td></tr>`).join('');
-  const status=o.status==='pending'?(isEn?'Pending shipment':'待出貨'):o.status==='shipped'?(isEn?'Shipped':'已出貨'):(isEn?'Cancelled':'已取消');
-  const total=money(o.total_amount),totalTwd=`NT$ ${Math.round(Number(o.total_twd||0)).toLocaleString()}`;
-  return `<div class="pdf-doc"><h2>${settings.brand?x(settings.brand)+' — ':''}${isEn?'Purchase Order':'採購訂單'}</h2><div class="pdf-meta">${isEn?'Order No.':'訂單編號'}：${x(o.order_no)}<br>${isEn?'Channel':'通路商'}：${x(o.channel_name)}${o.buyer_email?` &lt;${x(o.buyer_email)}&gt;`:''}<br>${isEn?'Date':'下單時間'}：${new Date(o.created_at).toLocaleString(isEn?'en-US':'zh-TW')}<br>${isEn?'Status':'狀態'}：${status} &nbsp;|&nbsp; ${isEn?'Currency':'貨幣'}：${x(code)}</div><table><thead><tr><th>${isEn?'Product':'商品名稱'}</th><th>${isEn?'Barcode / SKU':'條碼 / SKU'}</th><th>${isEn?'Unit Price':'單價'}</th><th style="text-align:center;">${isEn?'Qty':'數量'}</th><th>${isEn?'Subtotal':'小計'}</th></tr></thead><tbody>${rows}<tr class="grand"><td colspan="4" style="text-align:right;">${isEn?'Order Total':'訂單總額'}</td><td>${total}${code!=='TWD'?`<br><span class="twd">${totalTwd}</span>`:''}</td></tr></tbody></table><div class="footer">${x(settings.brand||'SEVERUS LIAN')} · ${x(o.order_no)}</div></div>`;
+  const rows=(o.items||[]).map(i=>{
+    const p=productMap[String(i.productId)]||{},img=i.img||p.img||'',primary=lang==='zh'?(i.name||i.nameEn):(i.nameEn||i.name),secondary=lang==='zh'?i.nameEn:i.name;
+    const imgCell=img?`<td style="padding:5px;"><img src="${x(img)}" crossorigin="anonymous" referrerpolicy="no-referrer" style="width:54px;height:54px;object-fit:cover;border-radius:4px;display:block;"></td>`:`<td style="padding:5px;"><div style="width:54px;height:54px;background:#f0efe9;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:18px;">📦</div></td>`;
+    return `<tr>${imgCell}<td><strong>${x(primary||'—')}</strong>${secondary&&secondary!==primary?`<br><span style="font-size:9px;color:#8d877e;">${x(secondary)}</span>`:''}</td><td>${x(i.barcode||'—')}</td><td>${money(i.unitAmount)}</td><td style="text-align:center;">${Number(i.qty||0)}</td><td class="price">${money(i.subtotal!=null?i.subtotal:Number(i.unitAmount||0)*Number(i.qty||0))}${code!=='TWD'?`<br><span class="twd">NT$ ${Math.round(Number(i.subtotalTwd||0)).toLocaleString()}</span>`:''}</td></tr>`;
+  }).join('');
+  const statusNative=T[o.status]||T.cancelled,status=lang==='en'?x(statusNative):`${x(statusNative)} <span style="font-size:9px;color:#8d877e;">${x(ORDER_DOC_TEXT.en[o.status]||'')}</span>`;
+  const total=money(o.total_amount),totalTwd=`NT$ ${Math.round(Number(o.total_twd||0)).toLocaleString()}`,locale={zh:'zh-TW',ja:'ja-JP',ko:'ko-KR',en:'en-US'}[lang]||'en-US';
+  return `<div class="pdf-doc"><h2>${settings.brand?x(settings.brand)+' — ':''}${orderDocLabel(lang,'title')}</h2><div class="pdf-meta">${orderDocLabel(lang,'orderNo')}：${x(o.order_no)}<br>${orderDocLabel(lang,'channel')}：${x(o.channel_name)}${o.buyer_email?` &lt;${x(o.buyer_email)}&gt;`:''}<br>${orderDocLabel(lang,'date')}：${new Date(o.created_at).toLocaleString(locale)}<br>${orderDocLabel(lang,'status')}：${status} &nbsp;|&nbsp; ${orderDocLabel(lang,'currency')}：${x(code)}</div><table><thead><tr><th style="width:64px;"></th><th>${orderDocLabel(lang,'product')}</th><th>${orderDocLabel(lang,'barcode')}</th><th>${orderDocLabel(lang,'unit')}</th><th style="text-align:center;">${orderDocLabel(lang,'qty')}</th><th>${orderDocLabel(lang,'subtotal')}</th></tr></thead><tbody>${rows}<tr class="grand"><td colspan="5" style="text-align:right;">${orderDocLabel(lang,'total')}</td><td>${total}${code!=='TWD'?`<br><span class="twd">${totalTwd}</span>`:''}</td></tr></tbody></table><div class="footer">${x(settings.brand||'SEVERUS LIAN')} · ${x(o.order_no)}</div></div>`;
 }
 function viewAdminOrderPdf(id){
   const o=orders.find(v=>v.id===id);if(!o){alert('找不到此訂單');return;}
@@ -2898,26 +2921,48 @@ function openOrderEditModal(id){
   if(!o){alert('找不到此訂單');return;}
   if(o.status!=='pending'){alert('只有待出貨的訂單可以調整數量');return;}
   editingOrderId=id;
+  editingOrderItems=(o.items||[]).map(i=>({...i,qty:Number(i.qty||0),_originalQty:Number(i.qty||0)}));
   document.getElementById('order-edit-title').textContent=`✏️ 調整訂單數量｜${o.order_no}`;
+  renderOrderEditItems();
+  document.getElementById('order-edit-modal').classList.remove('hidden');
+}
+function renderOrderEditItems(){
+  const o=orders.find(v=>v.id===editingOrderId);if(!o)return;
   const productMap=Object.fromEntries(products.map(p=>[String(p.id),p]));
-  document.getElementById('order-edit-body').innerHTML=`<table class="order-edit-table"><thead><tr><th>商品名稱</th><th>條碼 / SKU</th><th>目前訂購</th><th>可用庫存</th><th>新數量</th></tr></thead><tbody>${(o.items||[]).map((i,index)=>{
+  document.getElementById('order-edit-body').innerHTML=`<table class="order-edit-table"><thead><tr><th>商品名稱</th><th>條碼 / SKU</th><th>原數量</th><th>可用庫存</th><th>新數量</th></tr></thead><tbody>${editingOrderItems.map((i,index)=>{
     const p=productMap[String(i.productId)],stock=p?.stock;
     const stockText=stock==null?'未限制':Number(stock).toLocaleString();
-    const max=stock==null?'':`max="${Number(i.qty||0)+Math.max(0,Number(stock||0))}"`;
-    return `<tr><td><strong>${x(i.nameEn||i.name||'—')}</strong>${i.name&&i.nameEn?`<br><span style="font-size:11px;color:var(--hint)">${x(i.name)}</span>`:''}</td><td class="bc">${x(i.barcode||'—')}</td><td>${Number(i.qty||0)}</td><td>${stockText}</td><td><input class="qty-input admin-order-qty" type="number" min="0" step="1" ${max} value="${Number(i.qty||0)}" data-index="${index}" data-product-id="${x(String(i.productId||''))}" data-old-qty="${Number(i.qty||0)}" oninput="renderOrderEditSummary()"></td></tr>`;
+    const max=stock==null?'':`max="${Number(i._originalQty||0)+Math.max(0,Number(stock||0))}"`;
+    return `<tr><td><strong>${x(i.nameEn||i.name||'—')}</strong>${i.name&&i.nameEn?`<br><span style="font-size:11px;color:var(--hint)">${x(i.name)}</span>`:''}</td><td class="bc">${x(i.barcode||'—')}</td><td>${i._originalQty?Number(i._originalQty):'<span class="tag">新增</span>'}</td><td>${stockText}</td><td><input class="qty-input admin-order-qty" type="number" min="0" step="1" ${max} value="${Number(i.qty||0)}" data-index="${index}" oninput="renderOrderEditSummary()"></td></tr>`;
   }).join('')}</tbody></table>`;
-  document.getElementById('order-edit-modal').classList.remove('hidden');
+  const included=new Set(editingOrderItems.map(i=>String(i.productId)));
+  const available=products.filter(p=>!included.has(String(p.id)));
+  document.getElementById('order-edit-add').innerHTML=`<div class="order-edit-add-row"><div class="form-group"><label class="form-label">追加其他商品</label><select class="form-select" id="order-edit-product-select"><option value="">選擇商品名稱或條碼…</option>${available.map(p=>`<option value="${x(String(p.id))}" ${isOutOfStock(p)?'disabled':''}>${x(p.nameEn||p.name)}${p.barcode?'｜'+x(p.barcode):''}${p.stock!=null?'｜庫存 '+Number(p.stock):''}${isOutOfStock(p)?'（無庫存）':''}</option>`).join('')}</select></div><button class="btn" type="button" onclick="addProductToOrderEdit()">＋ 加入商品</button></div>${available.length?'':'<div style="font-size:12px;color:var(--hint);">所有商品都已在這張訂單中</div>'}`;
   renderOrderEditSummary();
 }
 function closeOrderEditModal(){
   editingOrderId='';
+  editingOrderItems=[];
   document.getElementById('order-edit-modal').classList.add('hidden');
+}
+function addProductToOrderEdit(){
+  const o=orders.find(v=>v.id===editingOrderId),select=document.getElementById('order-edit-product-select');
+  const p=products.find(v=>String(v.id)===String(select?.value||''));
+  if(!o||!p){alert('請先選擇要追加的商品');return;}
+  if(isOutOfStock(p)){alert('此商品目前無庫存，無法追加');return;}
+  const ch=(settings.channels||[]).find(c=>String(c.code||'').toUpperCase()===String(o.channel_code||'').toUpperCase())||null;
+  const curr=(settings.currencies||[]).find(c=>String(c.code||'').toUpperCase()===String(o.currency_code||'').toUpperCase())||{code:o.currency_code||'TWD',rate:o.currency_code==='TWD'?1:0};
+  if(!curr.rate&&curr.code!=='TWD'){alert('找不到此訂單幣別的匯率設定，請先至設定頁確認');return;}
+  const calculated=calcProductPrice(p,ch,curr),unitAmount=Number(calculated.displayAmt.toFixed(4)),unitTwd=Number(calcFinal(getBaseTwd(p,ch),ch).toFixed(4));
+  editingOrderItems.push({productId:String(p.id),name:p.name||'',nameEn:p.nameEn||'',barcode:p.barcode||'',img:p.img||'',qty:1,_originalQty:0,unitAmount,unitTwd,subtotal:unitAmount,subtotalTwd:unitTwd});
+  renderOrderEditItems();
 }
 function renderOrderEditSummary(){
   const o=orders.find(v=>v.id===editingOrderId);if(!o)return;
   let qty=0,total=0,totalTwd=0;
   document.querySelectorAll('.admin-order-qty').forEach(input=>{
-    const i=(o.items||[])[Number(input.dataset.index)],n=Math.max(0,Math.floor(Number(input.value)||0));
+    const i=editingOrderItems[Number(input.dataset.index)],n=Math.max(0,Math.floor(Number(input.value)||0));
+    if(i)i.qty=n;
     qty+=n;total+=Number(i?.unitAmount||0)*n;totalTwd+=Number(i?.unitTwd||0)*n;
   });
   document.getElementById('order-edit-summary').innerHTML=`<span>更新後總件數：<strong>${qty}</strong></span><span>更新後金額：<strong>${x(o.currency_code)} ${total.toLocaleString(undefined,{maximumFractionDigits:2})}</strong>${o.currency_code!=='TWD'?` <small>（NT$ ${Math.round(totalTwd).toLocaleString()}）</small>`:''}</span>`;
@@ -2930,10 +2975,11 @@ async function saveOrderItemQuantities(btn){
     const raw=String(input.value).trim(),qty=Number(raw);
     if(raw===''||!Number.isInteger(qty)||qty<0){alert('數量必須是 0 或正整數');input.focus();return;}
     if(input.max!==''&&qty>Number(input.max)){alert('增加的數量超過目前可用庫存');input.focus();return;}
-    items.push({productId:input.dataset.productId,qty});
+    const draft=editingOrderItems[Number(input.dataset.index)];
+    items.push({productId:String(draft.productId),qty});
   }
   if(!items.some(i=>i.qty>0)){alert('整張訂單至少需要保留 1 件商品');return;}
-  const changed=items.some((i,index)=>i.qty!==Number(o.items[index]?.qty||0));
+  const changed=editingOrderItems.length!==(o.items||[]).length||items.some((i,index)=>i.qty!==Number(editingOrderItems[index]?._originalQty||0));
   if(!changed){closeOrderEditModal();return;}
   if(!confirm('確認儲存新數量並同步調整庫存？'))return;
   const oldText=btn.textContent;btn.disabled=true;btn.textContent='儲存中…';
