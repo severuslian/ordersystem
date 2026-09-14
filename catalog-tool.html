@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 <title>SEVERUS LIAN Order System</title>
-<meta name="build-version" content="20260914-order-add-products">
+<meta name="build-version" content="20260914-order-list-product-preview">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -147,6 +147,14 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 .order-edit-add{margin-top:16px;padding:13px 14px;border:1px dashed var(--border);border-radius:var(--rs);background:var(--surface);}
 .order-edit-add-row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;}
 .order-edit-add-row .form-group{flex:1;min-width:240px;}
+.admin-order-products{display:flex;flex-direction:column;gap:7px;min-width:285px;}
+.admin-order-product{display:grid;grid-template-columns:54px minmax(145px,1fr) auto;gap:9px;align-items:center;padding:7px;background:var(--surface);border:1px solid var(--border);border-radius:var(--rs);}
+.admin-order-product-img{width:54px;height:54px;object-fit:cover;border-radius:5px;display:block;background:var(--surface2);}
+.admin-order-product-img-ph{width:54px;height:54px;border-radius:5px;background:var(--surface2);display:flex;align-items:center;justify-content:center;font-size:18px;}
+.admin-order-product-name{font-size:13px;font-weight:600;line-height:1.35;color:var(--text);}
+.admin-order-product-sub{font-size:10px;color:var(--hint);line-height:1.35;margin-top:2px;}
+.admin-order-product-meta{font-family:var(--mono);font-size:10px;color:var(--hint);margin-top:4px;}
+.admin-order-product-qty{min-width:42px;text-align:center;padding:5px 8px;border-radius:20px;background:var(--accent-l);color:var(--accent-d);font-size:12px;font-weight:700;white-space:nowrap;}
 
 /* catalog */
 .export-config{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px 20px;margin-bottom:16px;}
@@ -3005,6 +3013,15 @@ function filteredOrders(){
   return orders.filter(o=>{const d=o.created_at.slice(0,10);return(!from||d>=from)&&(!to||d<=to)});
 }
 function clearOrderDates(){document.getElementById('order-date-from').value='';document.getElementById('order-date-to').value='';renderOrderStats();}
+function renderAdminOrderProducts(o){
+  const productMap=Object.fromEntries(products.map(p=>[String(p.id),p]));
+  return `<div class="admin-order-products">${(o.items||[]).map(i=>{
+    const p=productMap[String(i.productId)]||{},img=i.img||p.img||'';
+    const primary=i.name||i.nameEn,secondary=i.nameEn;
+    const image=img?`<img class="admin-order-product-img" src="${x(img)}" crossorigin="anonymous" referrerpolicy="no-referrer" alt="">`:'<div class="admin-order-product-img-ph">📦</div>';
+    return `<div class="admin-order-product">${image}<div><div class="admin-order-product-name">${x(primary||'—')}</div>${secondary&&secondary!==primary?`<div class="admin-order-product-sub">${x(secondary)}</div>`:''}<div class="admin-order-product-meta">${x(i.barcode||'—')}</div></div><div class="admin-order-product-qty">× ${Number(i.qty||0)}</div></div>`;
+  }).join('')}</div>`;
+}
 function renderOrderStats(){
   const list=filteredOrders(),active=list.filter(o=>o.status!=='cancelled');
   const qty=active.reduce((s,o)=>s+Number(o.total_qty||0),0),twd=active.reduce((s,o)=>s+Number(o.total_twd||0),0);
@@ -3012,7 +3029,7 @@ function renderOrderStats(){
   const sums={};active.forEach(o=>(o.items||[]).forEach(i=>{const k=i.productId;sums[k]??={name:i.nameEn||i.name||k,barcode:i.barcode||'',qty:0};sums[k].qty+=Number(i.qty||0)}));
   const rows=Object.values(sums).sort((a,b)=>b.qty-a.qty);
   document.getElementById('order-product-stats').innerHTML=rows.length?`<table class="fee-table"><thead><tr><th>商品名稱</th><th>條碼 / SKU</th><th style="width:120px;">累計數量</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${x(r.name)}</td><td class="bc">${x(r.barcode||'—')}</td><td><strong>${r.qty}</strong></td></tr>`).join('')}</tbody></table>`:'<div class="empty-state"><p>此期間尚無有效訂單</p></div>';
-  document.getElementById('orders-list').innerHTML=list.length?`<table class="fee-table"><thead><tr><th>訂單編號／時間</th><th>通路／聯絡信箱</th><th>內容</th><th>金額</th><th>狀態</th><th style="min-width:220px;">操作</th></tr></thead><tbody>${list.map(o=>`<tr><td><strong>${x(o.order_no)}</strong><br><span style="font-size:11px;color:var(--hint)">${new Date(o.created_at).toLocaleString('zh-TW')}</span></td><td>${x(o.channel_name)}<br><span style="font-size:11px">${x(o.buyer_email||'—')}</span></td><td>${(o.items||[]).map(i=>`${x(i.nameEn||i.name)} × ${i.qty}`).join('<br>')}</td><td>${x(o.currency_code)} ${Number(o.total_amount).toLocaleString()}<br><span style="font-size:11px;color:var(--hint)">NT$ ${Math.round(Number(o.total_twd)).toLocaleString()}</span></td><td>${o.status==='pending'?'待出貨':o.status==='shipped'?'已出貨':'已取消'}</td><td>${orderActionButtons(o)}</td></tr>`).join('')}</tbody></table>`:'<div class="empty-state"><p>此期間尚無訂單</p></div>';
+  document.getElementById('orders-list').innerHTML=list.length?`<div style="overflow-x:auto;"><table class="fee-table"><thead><tr><th>訂單編號／時間</th><th>通路／聯絡信箱</th><th style="min-width:310px;">商品內容</th><th>金額</th><th>狀態</th><th style="min-width:220px;">操作</th></tr></thead><tbody>${list.map(o=>`<tr><td><strong>${x(o.order_no)}</strong><br><span style="font-size:11px;color:var(--hint)">${new Date(o.created_at).toLocaleString('zh-TW')}</span></td><td>${x(o.channel_name)}<br><span style="font-size:11px">${x(o.buyer_email||'—')}</span></td><td>${renderAdminOrderProducts(o)}</td><td>${x(o.currency_code)} ${Number(o.total_amount).toLocaleString()}<br><span style="font-size:11px;color:var(--hint)">NT$ ${Math.round(Number(o.total_twd)).toLocaleString()}</span></td><td>${o.status==='pending'?'待出貨':o.status==='shipped'?'已出貨':'已取消'}</td><td>${orderActionButtons(o)}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty-state"><p>此期間尚無訂單</p></div>';
 }
 async function setOrderStatus(id,status){
   if(!confirm(status==='shipped'?'確認此訂單已出貨？':'確認取消訂單並回補庫存？'))return;
