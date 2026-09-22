@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 <title>SEVERUS LIAN Order System</title>
-<meta name="build-version" content="20260914-pdf-meta-layout">
+<meta name="build-version" content="20260922-admin-create-order">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -147,6 +147,9 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 .order-edit-add{margin-top:16px;padding:13px 14px;border:1px dashed var(--border);border-radius:var(--rs);background:var(--surface);}
 .order-edit-add-row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;}
 .order-edit-add-row .form-group{flex:1;min-width:240px;}
+.admin-order-create-config{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-bottom:16px;}
+.admin-order-create-empty{padding:28px 18px;text-align:center;color:var(--hint);border:1px dashed var(--border);border-radius:var(--rs);background:var(--surface);}
+@media(max-width:680px){.admin-order-create-config{grid-template-columns:1fr;}}
 .admin-order-products{display:flex;flex-direction:column;gap:7px;min-width:285px;}
 .admin-order-product{display:grid;grid-template-columns:54px minmax(145px,1fr) auto;gap:9px;align-items:center;padding:7px;background:var(--surface);border:1px solid var(--border);border-radius:var(--rs);}
 .admin-order-product-img{width:54px;height:54px;object-fit:cover;border-radius:5px;display:block;background:var(--surface2);}
@@ -341,7 +344,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     </div>
     <!-- orders page -->
     <div id="sup-page-orders" class="page">
-      <div class="topbar"><div class="topbar-title">訂單</div><div class="topbar-actions"><button class="btn" onclick="loadOrders()">↻ 重新整理</button></div></div>
+      <div class="topbar"><div class="topbar-title">訂單</div><div class="topbar-actions"><button class="btn" onclick="loadOrders()">↻ 重新整理</button><button class="btn btn-primary" onclick="openAdminOrderCreateModal()">＋ 手動新增訂單</button></div></div>
       <div class="content">
         <div id="order-status-summary" class="stats-bar"></div>
         <div class="settings-section"><div class="settings-title">訂單紀錄</div><div id="orders-list"></div></div>
@@ -711,6 +714,30 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
   </div>
 </div>
 
+<!-- Admin Manual Order Create Modal -->
+<div class="modal-overlay hidden" id="admin-order-create-modal">
+  <div class="modal" style="max-width:900px;">
+    <div class="modal-header">
+      <div class="modal-title">＋ 手動新增訂單</div>
+      <button class="modal-close" onclick="closeAdminOrderCreateModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="order-edit-note">選擇通路與商品後建立正式訂單。訂單會成為「待出貨」並立即扣除庫存；若該通路已有待出貨訂單，系統將禁止重複建立。</div>
+      <div class="admin-order-create-config">
+        <div class="form-group"><label class="form-label">通路商</label><select class="form-select" id="admin-order-channel" onchange="adminOrderCreateChannelChanged()"></select></div>
+        <div class="form-group"><label class="form-label">訂單幣別</label><select class="form-select" id="admin-order-currency" onchange="renderAdminOrderCreateItems()"></select></div>
+      </div>
+      <div id="admin-order-create-add" class="order-edit-add"></div>
+      <div id="admin-order-create-items" style="margin-top:16px;"></div>
+      <div class="order-edit-summary" id="admin-order-create-summary"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeAdminOrderCreateModal()">取消</button>
+      <button class="btn btn-primary" id="admin-order-create-save" onclick="saveAdminCreatedOrder(this)">建立訂單並扣除庫存</button>
+    </div>
+  </div>
+</div>
+
 <div id="pdf-overlay">
   <div class="pdf-toolbar">
     <span id="pdf-overlay-title">📄 預覽</span>
@@ -908,7 +935,7 @@ let settings = {
   ]
 };
 let editingId=null, currentImg=null, currentImgFile=null;
-let buyerChannel=null, orderQtys={}, orders=[], savedOrderSignature='', savedOrderInfo=null, supplierAccessToken='', buyerAccessToken='', editingOrderId='', editingOrderItems=[];
+let buyerChannel=null, orderQtys={}, orders=[], savedOrderSignature='', savedOrderInfo=null, supplierAccessToken='', buyerAccessToken='', editingOrderId='', editingOrderItems=[], adminNewOrderItems=[];
 let currentCats=[];   // tags being edited in modal
 let activeCatFilter=''; // '' = all
 let dragSrcId=null;
@@ -2911,6 +2938,106 @@ function orderActionButtons(o){
   if(o.status==='pending') return `${pdf}<br><button class="btn btn-sm" style="margin-top:5px;" onclick="openOrderEditModal('${o.id}')">✏️ 調整數量</button> <button class="btn btn-sm btn-ok" style="margin-top:5px;" onclick="setOrderStatus('${o.id}','shipped')">已出貨</button> <button class="btn btn-sm btn-danger" style="margin-top:5px;" onclick="setOrderStatus('${o.id}','cancelled')">取消訂單</button>`;
   if(o.status==='shipped') return `${pdf}<br><button class="btn btn-sm btn-danger" style="margin-top:5px;" onclick="setOrderStatus('${o.id}','cancelled')">取消出貨並回補庫存</button>`;
   return pdf;
+}
+function adminOrderCreateContext(){
+  const channelCode=document.getElementById('admin-order-channel')?.value||'';
+  const currencyCode=document.getElementById('admin-order-currency')?.value||'';
+  const channel=(settings.channels||[]).find(c=>String(c.code||'').toUpperCase()===String(channelCode).toUpperCase())||null;
+  const currency=(settings.currencies||[]).find(c=>String(c.code||'').toUpperCase()===String(currencyCode).toUpperCase())||null;
+  return {channel,currency};
+}
+function openAdminOrderCreateModal(){
+  const channels=(settings.channels||[]).filter(c=>String(c.code||'').trim());
+  if(!channels.length){alert('請先在設定中建立至少一個通路商');return;}
+  if(!products.length){alert('目前沒有可加入訂單的商品');return;}
+  adminNewOrderItems=[];
+  const channelSelect=document.getElementById('admin-order-channel');
+  channelSelect.innerHTML=channels.map(c=>`<option value="${x(c.code)}">${x(c.name||c.code)}（${x(c.code)}）</option>`).join('');
+  document.getElementById('admin-order-create-modal').classList.remove('hidden');
+  adminOrderCreateChannelChanged();
+}
+function closeAdminOrderCreateModal(){
+  adminNewOrderItems=[];
+  document.getElementById('admin-order-create-modal').classList.add('hidden');
+}
+function adminOrderCreateChannelChanged(){
+  const channelCode=document.getElementById('admin-order-channel')?.value||'';
+  const channel=(settings.channels||[]).find(c=>String(c.code||'').toUpperCase()===String(channelCode).toUpperCase());
+  const currencySelect=document.getElementById('admin-order-currency');
+  const currencies=(settings.currencies||[]).filter(c=>String(c.code||'').trim()&&Number(c.rate)>0);
+  currencySelect.innerHTML=currencies.map(c=>`<option value="${x(c.code)}">${x(c.name||c.code)}（${x(c.code)}）</option>`).join('');
+  const preferred=String(channel?.defaultCurrency||'TWD').toUpperCase();
+  if(currencies.some(c=>String(c.code).toUpperCase()===preferred))currencySelect.value=preferred;
+  renderAdminOrderCreateItems();
+}
+function addProductToAdminOrder(){
+  const select=document.getElementById('admin-order-product-select');
+  const product=products.find(p=>String(p.id)===String(select?.value||''));
+  if(!product){alert('請先選擇商品');return;}
+  if(isOutOfStock(product)){alert('此商品目前無庫存，無法加入訂單');return;}
+  if(adminNewOrderItems.some(i=>String(i.productId)===String(product.id))){alert('此商品已在訂單中');return;}
+  adminNewOrderItems.push({productId:String(product.id),qty:1});
+  renderAdminOrderCreateItems();
+}
+function removeProductFromAdminOrder(index){
+  adminNewOrderItems.splice(index,1);
+  renderAdminOrderCreateItems();
+}
+function adminNewOrderQtyChanged(index,input){
+  const product=products.find(p=>String(p.id)===String(adminNewOrderItems[index]?.productId));
+  let qty=Math.max(1,Math.floor(Number(input.value)||1));
+  if(product?.stock!=null)qty=Math.min(qty,Math.max(1,Number(product.stock||0)));
+  input.value=qty;
+  if(adminNewOrderItems[index])adminNewOrderItems[index].qty=qty;
+  renderAdminOrderCreateSummary();
+}
+function renderAdminOrderCreateItems(){
+  const {channel,currency}=adminOrderCreateContext(),included=new Set(adminNewOrderItems.map(i=>String(i.productId)));
+  const available=products.filter(p=>!included.has(String(p.id)));
+  document.getElementById('admin-order-create-add').innerHTML=`<div class="order-edit-add-row"><div class="form-group"><label class="form-label">加入商品</label><select class="form-select" id="admin-order-product-select"><option value="">選擇中文商品名稱或條碼…</option>${available.map(p=>`<option value="${x(String(p.id))}" ${isOutOfStock(p)?'disabled':''}>${x(p.name||p.nameEn||'未命名商品')}${p.nameEn&&p.nameEn!==p.name?'｜'+x(p.nameEn):''}${p.barcode?'｜'+x(p.barcode):''}${p.stock!=null?'｜庫存 '+Number(p.stock):''}${isOutOfStock(p)?'（無庫存）':''}</option>`).join('')}</select></div><button class="btn" type="button" onclick="addProductToAdminOrder()">＋ 加入商品</button></div>`;
+  const body=document.getElementById('admin-order-create-items');
+  if(!adminNewOrderItems.length){body.innerHTML='<div class="admin-order-create-empty">尚未加入商品</div>';renderAdminOrderCreateSummary();return;}
+  body.innerHTML=`<div style="overflow-x:auto;"><table class="order-edit-table"><thead><tr><th style="width:66px;">縮圖</th><th>商品名稱</th><th>條碼 / SKU</th><th>庫存</th><th>單價</th><th>數量</th><th></th></tr></thead><tbody>${adminNewOrderItems.map((item,index)=>{
+    const p=products.find(v=>String(v.id)===String(item.productId))||{},price=channel&&currency?calcProductPrice(p,channel,currency).displayAmt:0;
+    const image=p.img?`<img class="admin-order-product-img" src="${x(p.img)}" crossorigin="anonymous" referrerpolicy="no-referrer" alt="">`:'<div class="admin-order-product-img-ph">📦</div>';
+    const max=p.stock==null?'':`max="${Math.max(0,Number(p.stock||0))}"`;
+    return `<tr><td>${image}</td><td><div class="admin-order-product-name">${x(p.name||p.nameEn||'—')}</div>${p.nameEn&&p.nameEn!==p.name?`<div class="admin-order-product-sub">${x(p.nameEn)}</div>`:''}</td><td class="bc">${x(p.barcode||'—')}</td><td>${p.stock==null?'未限制':Number(p.stock).toLocaleString()}</td><td><strong>${x(currency?.code||'')} ${Number(price||0).toLocaleString(undefined,{maximumFractionDigits:2})}</strong></td><td><input class="qty-input" style="width:78px;" type="number" min="1" step="1" ${max} value="${Number(item.qty||1)}" onchange="adminNewOrderQtyChanged(${index},this)"></td><td><button class="btn btn-sm btn-danger" type="button" onclick="removeProductFromAdminOrder(${index})">移除</button></td></tr>`;
+  }).join('')}</tbody></table></div>`;
+  renderAdminOrderCreateSummary();
+}
+function renderAdminOrderCreateSummary(){
+  const {channel,currency}=adminOrderCreateContext();
+  let qty=0,total=0,totalTwd=0;
+  adminNewOrderItems.forEach(item=>{const p=products.find(v=>String(v.id)===String(item.productId));if(!p||!channel||!currency)return;const n=Number(item.qty||0),price=calcProductPrice(p,channel,currency);qty+=n;total+=Number(price.displayAmt||0)*n;totalTwd+=Number(calcFinal(getBaseTwd(p,channel),channel)||0)*n;});
+  document.getElementById('admin-order-create-summary').innerHTML=`<span>商品種類：<strong>${adminNewOrderItems.length}</strong></span><span>總件數：<strong>${qty}</strong></span><span>訂單金額：<strong>${x(currency?.code||'—')} ${total.toLocaleString(undefined,{maximumFractionDigits:2})}</strong>${currency?.code&&currency.code!=='TWD'?` <small>（NT$ ${Math.round(totalTwd).toLocaleString()}）</small>`:''}</span>`;
+}
+async function saveAdminCreatedOrder(btn){
+  const {channel,currency}=adminOrderCreateContext();
+  if(!channel||!currency){alert('請選擇有效的通路與幣別');return;}
+  if(!adminNewOrderItems.length){alert('請至少加入一項商品');return;}
+  const items=[];
+  for(const item of adminNewOrderItems){
+    const p=products.find(v=>String(v.id)===String(item.productId)),qty=Number(item.qty||0);
+    if(!p||!Number.isInteger(qty)||qty<1){alert('商品數量必須是正整數');return;}
+    if(p.stock!=null&&qty>Number(p.stock)){alert(`${p.name||p.nameEn} 的數量超過目前庫存`);return;}
+    const price=calcProductPrice(p,channel,currency);
+    items.push({productId:String(p.id),qty,unitAmount:Number(price.displayAmt.toFixed(4)),unitTwd:Number(calcFinal(getBaseTwd(p,channel),channel).toFixed(4))});
+  }
+  if(!confirm(`確認為「${channel.name||channel.code}」建立待出貨訂單，並立即扣除庫存？`))return;
+  const oldText=btn.textContent;btn.disabled=true;btn.textContent='建立中…';
+  try{
+    const {data,error}=await sbClient.functions.invoke('admin-orders',{body:{action:'create',accessToken:supplierAccessToken,channelCode:channel.code,currencyCode:currency.code,language:channel.lang||'en',items}});
+    if(error||data?.error){
+      const code=String(data?.error||error?.message||'');
+      if(code.includes('PENDING_ORDER_EXISTS'))throw new Error('此通路目前已有待出貨訂單，完成出貨或取消後才能再建立');
+      if(code.includes('INSUFFICIENT_STOCK'))throw new Error('部分商品庫存不足，請重新整理後再試');
+      throw new Error('訂單建立失敗，請重新整理後再試');
+    }
+    closeAdminOrderCreateModal();
+    await loadOrders(true);await loadFromSupabase(supplierAccessToken);renderProducts();
+    showToast(`✅ 訂單 ${data?.order?.orderNo||''} 已建立並扣除庫存`);
+  }catch(e){alert(e.message||'訂單建立失敗');}
+  finally{btn.disabled=false;btn.textContent=oldText;}
 }
 const ORDER_DOC_TEXT={
   en:{title:'Purchase Order',orderNo:'Order No.',channel:'Channel',date:'Order Date',status:'Status',currency:'Currency',product:'Product',barcode:'Barcode / SKU',unit:'Unit Price',qty:'Qty',subtotal:'Subtotal',total:'Order Total',pending:'Pending shipment',shipped:'Shipped',cancelled:'Cancelled'},
