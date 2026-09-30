@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 <title>SEVERUS LIAN Order System</title>
-<meta name="build-version" content="20260922-admin-create-order">
+<meta name="build-version" content="20260930-buyer-session-pdf-fix">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -935,7 +935,7 @@ let settings = {
   ]
 };
 let editingId=null, currentImg=null, currentImgFile=null;
-let buyerChannel=null, orderQtys={}, orders=[], savedOrderSignature='', savedOrderInfo=null, supplierAccessToken='', buyerAccessToken='', editingOrderId='', editingOrderItems=[], adminNewOrderItems=[];
+let buyerChannel=null, orderQtys={}, orders=[], savedOrderSignature='', savedOrderInfo=null, supplierAccessToken='', buyerAccessToken='', buyerSessionExpiresAt='', buyerReauthPending=false, editingOrderId='', editingOrderItems=[], adminNewOrderItems=[];
 let currentCats=[];   // tags being edited in modal
 let activeCatFilter=''; // '' = all
 let dragSrcId=null;
@@ -1115,10 +1115,15 @@ async function buyerLogin(){
   if(!code){document.getElementById('buyer-err').textContent='請輸入通路商專屬代碼';return;}
   const {data,error}=await sbClient.functions.invoke('access-login',{body:{role:'buyer',secret:code}});
   if(error||data?.error||!data?.accessToken){document.getElementById('buyer-err').textContent='找不到此代碼，請確認後再試';return;}
+  const previousChannelCode=String(buyerChannel?.code||'').toUpperCase();
+  const preserveDraft=buyerReauthPending&&previousChannelCode===code;
   buyerAccessToken=data.accessToken;
+  buyerSessionExpiresAt=data.expiresAt||'';
   const ch=settings.channels.find(c=>(c.code||'').toUpperCase()===code)||data.channel;
   if(ch){
-    buyerChannel=ch; orderQtys={};
+    buyerChannel=ch;
+    if(!preserveDraft)orderQtys={};
+    buyerReauthPending=false;
     buyerLang=ch.lang || (code==='B2B' ? 'en' : 'zh');
     document.getElementById('gate').style.display='none';
     document.getElementById('app-buyer').style.display='flex';
@@ -1134,8 +1139,10 @@ async function buyerLogin(){
     });
   } else { document.getElementById('buyer-err').textContent='找不到此代碼，請確認後再試'; }
 }
-async function logout(){
+async function logout(preserveBuyerDraft=false){
   supplierAccessToken=''; buyerAccessToken='';
+  buyerSessionExpiresAt='';
+  if(!preserveBuyerDraft){buyerReauthPending=false;buyerChannel=null;orderQtys={};savedOrderInfo=null;savedOrderSignature='';}
   stopAutoUpload(); // stop auto upload on logout
   document.getElementById('app-supplier').style.display='none';
   document.getElementById('app-buyer').style.display='none';
@@ -2136,16 +2143,44 @@ function orderPayload(){
   const curr=getBCurr(),ch=buyerChannel;
   return products.filter(p=>(orderQtys[p.id]||0)>0).map(p=>({productId:p.id,qty:orderQtys[p.id],unitAmount:calcProductPrice(p,ch,curr).displayAmt,unitTwd:calcFinal(getBaseTwd(p,ch),ch)}));
 }
+function orderFlowError(code,message=''){
+  const error=new Error(message||code||'ORDER_FAILED');
+  error.code=code||'ORDER_FAILED';
+  return error;
+}
+async function getFunctionErrorCode(data,error){
+  if(data?.error)return String(data.error);
+  const response=error?.context;
+  if(response&&typeof response.clone==='function'){
+    try{const payload=await response.clone().json();if(payload?.error)return String(payload.error);}catch(_e){}
+  }
+  return String(error?.message||'ORDER_FAILED');
+}
 async function ensureOrderSaved(){
   const items=orderPayload(); const signature=JSON.stringify(items)+getBCurr().code+buyerChannel.code;
   if(savedOrderInfo&&savedOrderSignature===signature) return savedOrderInfo;
+  if(!buyerAccessToken||(buyerSessionExpiresAt&&Date.now()>=new Date(buyerSessionExpiresAt).getTime()))throw orderFlowError('LOGIN_REQUIRED');
   const {data,error}=await sbClient.functions.invoke('create-order',{body:{accessToken:buyerAccessToken,channelCode:buyerChannel.code,currencyCode:getBCurr().code,language:buyerLang,items}});
-  if(error||data?.error) throw new Error(data?.error||error.message);
+  if(error||data?.error){const code=await getFunctionErrorCode(data,error);throw orderFlowError(code,error?.message||code);}
   savedOrderSignature=signature;savedOrderInfo=data.order;await loadFromSupabase(buyerAccessToken);return savedOrderInfo;
 }
 function orderSaveErrorMessage(e){
-  const msg=String(e?.message||e||'');
-  return msg.includes('PENDING_ORDER_EXISTS')?t('pending_order_exists'):msg;
+  const code=String(e?.code||e?.message||e||'');
+  if(code.includes('PENDING_ORDER_EXISTS'))return t('pending_order_exists');
+  if(code.includes('LOGIN_REQUIRED'))return ({zh:'登入已逾期，請重新輸入通路代碼。已填寫的商品數量會保留。',en:'Your session has expired. Please sign in again. Your order quantities will be kept.',ja:'ログインの有効期限が切れました。再度ログインしてください。入力した数量は保持されます。',ko:'로그인 세션이 만료되었습니다. 다시 로그인해 주세요. 입력한 수량은 유지됩니다.'}[buyerLang]||'登入已逾期，請重新登入。');
+  if(code.includes('INSUFFICIENT_STOCK'))return t('out_of_stock_alert');
+  return ({zh:'訂單送出失敗，請重新整理後再試；若仍失敗請聯絡供應商。',en:'The order could not be submitted. Please refresh and try again, or contact the supplier.',ja:'注文を送信できませんでした。再読み込みして再試行するか、仕入先に連絡してください。',ko:'주문을 전송할 수 없습니다. 새로고침 후 다시 시도하거나 공급업체에 문의해 주세요.'}[buyerLang]||code);
+}
+async function handleOrderSaveFailure(error){
+  const code=String(error?.code||error?.message||error||'');
+  alert(orderSaveErrorMessage(error));
+  if(!code.includes('LOGIN_REQUIRED'))return;
+  buyerReauthPending=true;
+  document.getElementById('order-modal').classList.add('hidden');
+  await logout(true);
+  const buyerTab=document.querySelector('.gate-tab[onclick*="buyer"]');
+  if(buyerTab)switchTab('buyer',buyerTab);
+  document.getElementById('buyer-err').textContent=({zh:'登入已逾期，重新登入後可繼續剛才的訂單。',en:'Session expired. Sign in again to continue your order.',ja:'ログイン期限が切れました。再ログインすると注文を続けられます。',ko:'로그인이 만료되었습니다. 다시 로그인하면 주문을 계속할 수 있습니다.'}[buyerLang]||'請重新登入後繼續訂單。');
 }
 async function deductStock(){
   const lines=products.filter(p=>(orderQtys[p.id]||0)>0);
@@ -2288,7 +2323,7 @@ async function exportOrderXlsx(){
     alert(t('out_of_stock_alert'));
     return;
   }
-  try{await ensureOrderSaved();}catch(e){alert(orderSaveErrorMessage(e));return;}
+  try{await ensureOrderSaved();}catch(e){await handleOrderSaveFailure(e);return;}
   const curr=getBCurr(),ch=buyerChannel,L=I18N[buyerLang]||I18N.zh;
   const isEn=buyerLang==='en';
   const isForeign=curr.code!=='TWD';
@@ -2624,8 +2659,9 @@ async function captureToPdf(element, filename, btn){
   try {
     const JsPDF = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
     if(!JsPDF || !window.html2canvas){
-      alert('PDF 程式庫載入中，請稍後再按一次');
+      const usePrint=confirm('PDF 下載元件未能載入。\n\n請先確認網路連線並重新整理；或按「確定」開啟列印視窗，再選擇「儲存為 PDF」。');
       if(btn){ btn.textContent=orig; btn.disabled=false; }
+      if(usePrint)window.print();
       return;
     }
     const inner = element.querySelector('div') || element;
@@ -2776,7 +2812,7 @@ async function exportOrderPdf(){
     alert(t('out_of_stock_alert'));
     return;
   }
-  try{await ensureOrderSaved();}catch(e){alert(orderSaveErrorMessage(e));return;}
+  try{await ensureOrderSaved();}catch(e){await handleOrderSaveFailure(e);return;}
   const lines=products.filter(p=>(orderQtys[p.id]||0)>0);
   if(!lines.length){alert(t('confirm_no_qty'));return;}
   const ch=buyerChannel, curr=getBCurr();
