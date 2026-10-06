@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 <title>SEVERUS LIAN Order System</title>
-<meta name="build-version" content="20261006-zh-order-pdf-pricing">
+<meta name="build-version" content="20261006-admin-order-multi-select">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -147,9 +147,19 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 .order-edit-add{margin-top:16px;padding:13px 14px;border:1px dashed var(--border);border-radius:var(--rs);background:var(--surface);}
 .order-edit-add-row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;}
 .order-edit-add-row .form-group{flex:1;min-width:240px;}
-.admin-order-create-config{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-bottom:16px;}
+.admin-order-create-config{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:16px;}
 .admin-order-create-empty{padding:28px 18px;text-align:center;color:var(--hint);border:1px dashed var(--border);border-radius:var(--rs);background:var(--surface);}
 @media(max-width:680px){.admin-order-create-config{grid-template-columns:1fr;}}
+.admin-order-language-display{min-height:40px;display:flex;align-items:center;padding:9px 11px;border:1px solid var(--border);border-radius:var(--rs);background:var(--surface2);font-size:13px;font-weight:600;color:var(--text);}
+.admin-order-picker-tools{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;flex-wrap:wrap;}
+.admin-order-picker-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;max-height:330px;overflow:auto;padding:2px;}
+.admin-order-picker-card{display:grid;grid-template-columns:22px 48px minmax(0,1fr);gap:8px;align-items:center;padding:8px;border:1px solid var(--border);border-radius:var(--rs);background:var(--surface);cursor:pointer;transition:border-color .15s,background .15s;}
+.admin-order-picker-card:hover{border-color:var(--accent);background:var(--accent-l);}
+.admin-order-picker-card:has(input:checked){border-color:var(--accent);background:var(--accent-l);}
+.admin-order-picker-card.disabled{opacity:.5;cursor:not-allowed;background:var(--surface2);}
+.admin-order-picker-card input{width:17px;height:17px;accent-color:var(--accent);}
+.admin-order-picker-card .admin-order-product-img,.admin-order-picker-card .admin-order-product-img-ph{width:48px;height:48px;}
+@media(max-width:720px){.admin-order-picker-list{grid-template-columns:1fr;}}
 .admin-order-products{display:flex;flex-direction:column;gap:7px;min-width:285px;}
 .admin-order-product{display:grid;grid-template-columns:54px minmax(145px,1fr) auto;gap:9px;align-items:center;padding:7px;background:var(--surface);border:1px solid var(--border);border-radius:var(--rs);}
 .admin-order-product-img{width:54px;height:54px;object-fit:cover;border-radius:5px;display:block;background:var(--surface2);}
@@ -730,6 +740,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       <div class="admin-order-create-config">
         <div class="form-group"><label class="form-label">通路商</label><select class="form-select" id="admin-order-channel" onchange="adminOrderCreateChannelChanged()"></select></div>
         <div class="form-group"><label class="form-label">訂單幣別</label><select class="form-select" id="admin-order-currency" onchange="renderAdminOrderCreateItems()"></select></div>
+        <div class="form-group"><label class="form-label">訂單預設語言</label><div class="admin-order-language-display" id="admin-order-language">—</div></div>
       </div>
       <div id="admin-order-create-add" class="order-edit-add"></div>
       <div id="admin-order-create-items" style="margin-top:16px;"></div>
@@ -3004,19 +3015,30 @@ function adminOrderCreateChannelChanged(){
   const channelCode=document.getElementById('admin-order-channel')?.value||'';
   const channel=(settings.channels||[]).find(c=>String(c.code||'').toUpperCase()===String(channelCode).toUpperCase());
   const currencySelect=document.getElementById('admin-order-currency');
+  const languageCode=['zh','en','ja','ko'].includes(channel?.lang)?channel.lang:'zh';
+  const languageNames={zh:'繁體中文',en:'English',ja:'日本語',ko:'한국어'};
+  const languageDisplay=document.getElementById('admin-order-language');
+  if(languageDisplay)languageDisplay.textContent=languageNames[languageCode]||'English';
   const currencies=(settings.currencies||[]).filter(c=>String(c.code||'').trim()&&Number(c.rate)>0);
   currencySelect.innerHTML=currencies.map(c=>`<option value="${x(c.code)}">${x(c.name||c.code)}（${x(c.code)}）</option>`).join('');
   const preferred=String(channel?.defaultCurrency||'TWD').toUpperCase();
   if(currencies.some(c=>String(c.code).toUpperCase()===preferred))currencySelect.value=preferred;
   renderAdminOrderCreateItems();
 }
-function addProductToAdminOrder(){
-  const select=document.getElementById('admin-order-product-select');
-  const product=products.find(p=>String(p.id)===String(select?.value||''));
-  if(!product){alert('請先選擇商品');return;}
-  if(isOutOfStock(product)){alert('此商品目前無庫存，無法加入訂單');return;}
-  if(adminNewOrderItems.some(i=>String(i.productId)===String(product.id))){alert('此商品已在訂單中');return;}
-  adminNewOrderItems.push({productId:String(product.id),qty:1});
+function toggleAdminOrderProductChecks(master){
+  document.querySelectorAll('.admin-order-product-check:not(:disabled)').forEach(input=>{input.checked=master.checked;});
+}
+function addSelectedProductsToAdminOrder(){
+  const selected=[...document.querySelectorAll('.admin-order-product-check:checked')].map(input=>String(input.value));
+  if(!selected.length){alert('請先勾選至少一項商品');return;}
+  const included=new Set(adminNewOrderItems.map(item=>String(item.productId)));
+  selected.forEach(productId=>{
+    const product=products.find(p=>String(p.id)===productId);
+    if(product&&!isOutOfStock(product)&&!included.has(productId)){
+      adminNewOrderItems.push({productId,qty:1});
+      included.add(productId);
+    }
+  });
   renderAdminOrderCreateItems();
 }
 function removeProductFromAdminOrder(index){
@@ -3034,7 +3056,10 @@ function adminNewOrderQtyChanged(index,input){
 function renderAdminOrderCreateItems(){
   const {channel,currency}=adminOrderCreateContext(),included=new Set(adminNewOrderItems.map(i=>String(i.productId)));
   const available=products.filter(p=>!included.has(String(p.id)));
-  document.getElementById('admin-order-create-add').innerHTML=`<div class="order-edit-add-row"><div class="form-group"><label class="form-label">加入商品</label><select class="form-select" id="admin-order-product-select"><option value="">選擇中文商品名稱或條碼…</option>${available.map(p=>`<option value="${x(String(p.id))}" ${isOutOfStock(p)?'disabled':''}>${x(p.name||p.nameEn||'未命名商品')}${p.nameEn&&p.nameEn!==p.name?'｜'+x(p.nameEn):''}${p.barcode?'｜'+x(p.barcode):''}${p.stock!=null?'｜庫存 '+Number(p.stock):''}${isOutOfStock(p)?'（無庫存）':''}</option>`).join('')}</select></div><button class="btn" type="button" onclick="addProductToAdminOrder()">＋ 加入商品</button></div>`;
+  document.getElementById('admin-order-create-add').innerHTML=available.length?`<div class="admin-order-picker-tools"><div><div class="form-label" style="margin:0 0 3px;">勾選要加入的商品</div><div style="font-size:11px;color:var(--hint);">可同時勾選多項商品，再一次加入訂單</div></div><label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" onchange="toggleAdminOrderProductChecks(this)"> 全選可用商品</label></div><div class="admin-order-picker-list">${available.map(p=>{
+    const disabled=isOutOfStock(p),image=p.img?`<img class="admin-order-product-img" src="${x(p.img)}" crossorigin="anonymous" referrerpolicy="no-referrer" alt="">`:'<div class="admin-order-product-img-ph">📦</div>';
+    return `<label class="admin-order-picker-card${disabled?' disabled':''}"><input class="admin-order-product-check" type="checkbox" value="${x(String(p.id))}" ${disabled?'disabled':''}>${image}<span><span class="admin-order-product-name">${x(p.name||p.nameEn||'未命名商品')}</span>${p.nameEn&&p.nameEn!==p.name?`<span class="admin-order-product-sub">${x(p.nameEn)}</span>`:''}<span class="admin-order-product-meta">${x(p.barcode||'無條碼')} · ${p.stock==null?'庫存未限制':'庫存 '+Number(p.stock).toLocaleString()}${disabled?' · 無庫存':''}</span></span></label>`;
+  }).join('')}</div><div style="display:flex;justify-content:flex-end;margin-top:10px;"><button class="btn btn-primary" type="button" onclick="addSelectedProductsToAdminOrder()">＋ 加入已勾選商品</button></div>`:'<div class="admin-order-create-empty" style="padding:18px;">所有商品都已加入訂單</div>';
   const body=document.getElementById('admin-order-create-items');
   if(!adminNewOrderItems.length){body.innerHTML='<div class="admin-order-create-empty">尚未加入商品</div>';renderAdminOrderCreateSummary();return;}
   body.innerHTML=`<div style="overflow-x:auto;"><table class="order-edit-table"><thead><tr><th style="width:66px;">縮圖</th><th>商品名稱</th><th>條碼 / SKU</th><th>庫存</th><th>商品定價（原價）</th><th>通路價（抽成後）</th><th>數量</th><th></th></tr></thead><tbody>${adminNewOrderItems.map((item,index)=>{
@@ -3068,7 +3093,8 @@ async function saveAdminCreatedOrder(btn){
   if(!confirm(`確認為「${channel.name||channel.code}」建立待出貨訂單，並立即扣除庫存？`))return;
   const oldText=btn.textContent;btn.disabled=true;btn.textContent='建立中…';
   try{
-    const {data,error}=await sbClient.functions.invoke('admin-orders',{body:{action:'create',accessToken:supplierAccessToken,channelCode:channel.code,currencyCode:currency.code,language:channel.lang||'en',items}});
+    const orderLanguage=['zh','en','ja','ko'].includes(channel.lang)?channel.lang:'zh';
+    const {data,error}=await sbClient.functions.invoke('admin-orders',{body:{action:'create',accessToken:supplierAccessToken,channelCode:channel.code,currencyCode:currency.code,language:orderLanguage,items}});
     if(error||data?.error){
       const code=String(data?.error||error?.message||'');
       if(code.includes('PENDING_ORDER_EXISTS'))throw new Error('此通路目前已有待出貨訂單，完成出貨或取消後才能再建立');
