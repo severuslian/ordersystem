@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 <title>SEVERUS LIAN Order System</title>
-<meta name="build-version" content="20261006-admin-order-stock-status">
+<meta name="build-version" content="20261006-product-family-sorting">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -921,6 +921,7 @@ async function restoreBackup(file){
     products = data.products;
     if(data.settings) settings = data.settings;
     if(data.categories) categories = data.categories;
+    products=sortProductsByNameFamily(products);
     await persist();
     renderProducts();
     alert('✅ 還原成功！');
@@ -1082,6 +1083,8 @@ async function loadFromSupabase(accessToken=''){
     settings = JSON.parse(localStorage.getItem('cp_settings')||'null') || settings;
     categories = JSON.parse(localStorage.getItem('cp_categories')||'null') || categories;
   }
+  products=sortProductsByNameFamily(products);
+  localStorage.setItem('cp_products', JSON.stringify(products));
   showLoading(false);
 }
 
@@ -1186,6 +1189,54 @@ function getAllCats(){
   const set=new Set();
   products.forEach(p=>(p.cats||[]).forEach(c=>set.add(c)));
   return [...set].sort();
+}
+
+function normalizedProductName(p){
+  return String(p?.name||p?.nameEn||'').normalize('NFKC').toLowerCase().replace(/[\s\p{P}\p{S}]+/gu,'');
+}
+function longestCommonNamePart(a,b){
+  const left=Array.from(normalizedProductName(a)),right=Array.from(normalizedProductName(b));
+  if(!left.length||!right.length)return 0;
+  let previous=new Array(right.length+1).fill(0),longest=0;
+  for(let i=1;i<=left.length;i++){
+    const current=new Array(right.length+1).fill(0);
+    for(let j=1;j<=right.length;j++){
+      if(left[i-1]===right[j-1]){
+        current[j]=previous[j-1]+1;
+        if(current[j]>longest)longest=current[j];
+      }
+    }
+    previous=current;
+  }
+  return longest;
+}
+function productsShareNameFamily(a,b){
+  const catA=(a?.cats||[])[0]||'',catB=(b?.cats||[])[0]||'';
+  if(catA&&catB&&catA!==catB)return false;
+  const lenA=Array.from(normalizedProductName(a)).length,lenB=Array.from(normalizedProductName(b)).length;
+  const shorter=Math.min(lenA,lenB);
+  if(shorter<2)return false;
+  const common=longestCommonNamePart(a,b);
+  return common>=4||(common>=2&&common/shorter>=0.55);
+}
+function sortProductsByNameFamily(list){
+  const items=[...(list||[])];
+  if(items.length<2)return items;
+  const parent=items.map((_,index)=>index);
+  const find=index=>{while(parent[index]!==index){parent[index]=parent[parent[index]];index=parent[index];}return index;};
+  const join=(a,b)=>{const rootA=find(a),rootB=find(b);if(rootA!==rootB)parent[rootB]=rootA;};
+  for(let i=0;i<items.length;i++)for(let j=i+1;j<items.length;j++)if(productsShareNameFamily(items[i],items[j]))join(i,j);
+  const groups=new Map();
+  items.forEach((item,index)=>{const root=find(index);if(!groups.has(root))groups.set(root,[]);groups.get(root).push({item,index});});
+  const categoryRank=name=>{const index=categories.indexOf(name);return index>=0?index:(name?categories.length:categories.length+1);};
+  const collator=new Intl.Collator('zh-Hant',{numeric:true,sensitivity:'base'});
+  return [...groups.values()].sort((left,right)=>{
+    const catLeft=(left[0].item.cats||[])[0]||'',catRight=(right[0].item.cats||[])[0]||'';
+    const rankDiff=categoryRank(catLeft)-categoryRank(catRight);
+    if(rankDiff)return rankDiff;
+    if(catLeft!==catRight)return collator.compare(catLeft,catRight);
+    return Math.min(...left.map(entry=>entry.index))-Math.min(...right.map(entry=>entry.index));
+  }).flatMap(group=>group.sort((a,b)=>a.index-b.index).map(entry=>entry.item));
 }
 
 function renderProducts(){
@@ -1535,6 +1586,7 @@ async function saveProduct(){
       stockLow: document.getElementById('p-stock-override').checked || false};
     if(editingId) products[products.findIndex(p=>p.id===editingId)]=d;
     else products.push(d);
+    products=sortProductsByNameFamily(products);
     await persist();
     closePModal();
     renderProducts();
@@ -3603,6 +3655,7 @@ async function runBatchUpload(){
       }
     });
 
+    products=sortProductsByNameFamily(products);
     await persist();
     renderProducts();
 
