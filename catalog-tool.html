@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 <title>SEVERUS LIAN Order System</title>
-<meta name="build-version" content="20261006-admin-order-multi-select">
+<meta name="build-version" content="20261006-admin-order-stock-status">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -3058,7 +3058,7 @@ function renderAdminOrderCreateItems(){
   const available=products.filter(p=>!included.has(String(p.id)));
   document.getElementById('admin-order-create-add').innerHTML=available.length?`<div class="admin-order-picker-tools"><div><div class="form-label" style="margin:0 0 3px;">勾選要加入的商品</div><div style="font-size:11px;color:var(--hint);">可同時勾選多項商品，再一次加入訂單</div></div><label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" onchange="toggleAdminOrderProductChecks(this)"> 全選可用商品</label></div><div class="admin-order-picker-list">${available.map(p=>{
     const disabled=isOutOfStock(p),image=p.img?`<img class="admin-order-product-img" src="${x(p.img)}" crossorigin="anonymous" referrerpolicy="no-referrer" alt="">`:'<div class="admin-order-product-img-ph">📦</div>';
-    return `<label class="admin-order-picker-card${disabled?' disabled':''}"><input class="admin-order-product-check" type="checkbox" value="${x(String(p.id))}" ${disabled?'disabled':''}>${image}<span><span class="admin-order-product-name">${x(p.name||p.nameEn||'未命名商品')}</span>${p.nameEn&&p.nameEn!==p.name?`<span class="admin-order-product-sub">${x(p.nameEn)}</span>`:''}<span class="admin-order-product-meta">${x(p.barcode||'無條碼')} · ${p.stock==null?'庫存未限制':'庫存 '+Number(p.stock).toLocaleString()}${disabled?' · 無庫存':''}</span></span></label>`;
+    return `<label class="admin-order-picker-card${disabled?' disabled':''}"><input class="admin-order-product-check" type="checkbox" value="${x(String(p.id))}" ${disabled?'disabled':''}>${image}<span><span class="admin-order-product-name">${x(p.name||p.nameEn||'未命名商品')}</span>${p.nameEn&&p.nameEn!==p.name?`<span class="admin-order-product-sub">${x(p.nameEn)}</span>`:''}<span class="admin-order-product-meta">${x(p.barcode||'無條碼')}</span><span style="display:block;margin-top:4px;">${stockBadgeAdmin(p)}</span></span></label>`;
   }).join('')}</div><div style="display:flex;justify-content:flex-end;margin-top:10px;"><button class="btn btn-primary" type="button" onclick="addSelectedProductsToAdminOrder()">＋ 加入已勾選商品</button></div>`:'<div class="admin-order-create-empty" style="padding:18px;">所有商品都已加入訂單</div>';
   const body=document.getElementById('admin-order-create-items');
   if(!adminNewOrderItems.length){body.innerHTML='<div class="admin-order-create-empty">尚未加入商品</div>';renderAdminOrderCreateSummary();return;}
@@ -3068,7 +3068,7 @@ function renderAdminOrderCreateItems(){
     const channelPrice=Number(pricing?.displayAmt||0);
     const image=p.img?`<img class="admin-order-product-img" src="${x(p.img)}" crossorigin="anonymous" referrerpolicy="no-referrer" alt="">`:'<div class="admin-order-product-img-ph">📦</div>';
     const max=p.stock==null?'':`max="${Math.max(0,Number(p.stock||0))}"`;
-    return `<tr><td>${image}</td><td><div class="admin-order-product-name">${x(p.name||p.nameEn||'—')}</div>${p.nameEn&&p.nameEn!==p.name?`<div class="admin-order-product-sub">${x(p.nameEn)}</div>`:''}</td><td class="bc">${x(p.barcode||'—')}</td><td>${p.stock==null?'未限制':Number(p.stock).toLocaleString()}</td><td><strong>${x(currency?.code||'')} ${listPrice.toLocaleString(undefined,{maximumFractionDigits:2})}</strong></td><td><strong style="color:var(--accent-d);">${x(currency?.code||'')} ${channelPrice.toLocaleString(undefined,{maximumFractionDigits:2})}</strong></td><td><input class="qty-input" style="width:78px;" type="number" min="1" step="1" ${max} value="${Number(item.qty||1)}" onchange="adminNewOrderQtyChanged(${index},this)"></td><td><button class="btn btn-sm btn-danger" type="button" onclick="removeProductFromAdminOrder(${index})">移除</button></td></tr>`;
+    return `<tr><td>${image}</td><td><div class="admin-order-product-name">${x(p.name||p.nameEn||'—')}</div>${p.nameEn&&p.nameEn!==p.name?`<div class="admin-order-product-sub">${x(p.nameEn)}</div>`:''}</td><td class="bc">${x(p.barcode||'—')}</td><td>${stockBadgeAdmin(p)}</td><td><strong>${x(currency?.code||'')} ${listPrice.toLocaleString(undefined,{maximumFractionDigits:2})}</strong></td><td><strong style="color:var(--accent-d);">${x(currency?.code||'')} ${channelPrice.toLocaleString(undefined,{maximumFractionDigits:2})}</strong></td><td><input class="qty-input" style="width:78px;" type="number" min="1" step="1" ${max} value="${Number(item.qty||1)}" onchange="adminNewOrderQtyChanged(${index},this)"></td><td><button class="btn btn-sm btn-danger" type="button" onclick="removeProductFromAdminOrder(${index})">移除</button></td></tr>`;
   }).join('')}</tbody></table></div>`;
   renderAdminOrderCreateSummary();
 }
