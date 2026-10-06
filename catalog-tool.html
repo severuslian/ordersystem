@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 <title>SEVERUS LIAN Order System</title>
-<meta name="build-version" content="20260930-buyer-session-pdf-fix">
+<meta name="build-version" content="20261006-admin-order-price-columns">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -3033,11 +3033,13 @@ function renderAdminOrderCreateItems(){
   document.getElementById('admin-order-create-add').innerHTML=`<div class="order-edit-add-row"><div class="form-group"><label class="form-label">加入商品</label><select class="form-select" id="admin-order-product-select"><option value="">選擇中文商品名稱或條碼…</option>${available.map(p=>`<option value="${x(String(p.id))}" ${isOutOfStock(p)?'disabled':''}>${x(p.name||p.nameEn||'未命名商品')}${p.nameEn&&p.nameEn!==p.name?'｜'+x(p.nameEn):''}${p.barcode?'｜'+x(p.barcode):''}${p.stock!=null?'｜庫存 '+Number(p.stock):''}${isOutOfStock(p)?'（無庫存）':''}</option>`).join('')}</select></div><button class="btn" type="button" onclick="addProductToAdminOrder()">＋ 加入商品</button></div>`;
   const body=document.getElementById('admin-order-create-items');
   if(!adminNewOrderItems.length){body.innerHTML='<div class="admin-order-create-empty">尚未加入商品</div>';renderAdminOrderCreateSummary();return;}
-  body.innerHTML=`<div style="overflow-x:auto;"><table class="order-edit-table"><thead><tr><th style="width:66px;">縮圖</th><th>商品名稱</th><th>條碼 / SKU</th><th>庫存</th><th>單價</th><th>數量</th><th></th></tr></thead><tbody>${adminNewOrderItems.map((item,index)=>{
-    const p=products.find(v=>String(v.id)===String(item.productId))||{},price=channel&&currency?calcProductPrice(p,channel,currency).displayAmt:0;
+  body.innerHTML=`<div style="overflow-x:auto;"><table class="order-edit-table"><thead><tr><th style="width:66px;">縮圖</th><th>商品名稱</th><th>條碼 / SKU</th><th>庫存</th><th>商品定價（原價）</th><th>通路價（抽成後）</th><th>數量</th><th></th></tr></thead><tbody>${adminNewOrderItems.map((item,index)=>{
+    const p=products.find(v=>String(v.id)===String(item.productId))||{},pricing=channel&&currency?calcProductPrice(p,channel,currency):null;
+    const listPrice=pricing&&currency?(pricing.isForeignOverride?Number(pricing.foreignOverrideAmt||0):Number(pricing.baseTwd||0)*Number(currency.rate||0)):0;
+    const channelPrice=Number(pricing?.displayAmt||0);
     const image=p.img?`<img class="admin-order-product-img" src="${x(p.img)}" crossorigin="anonymous" referrerpolicy="no-referrer" alt="">`:'<div class="admin-order-product-img-ph">📦</div>';
     const max=p.stock==null?'':`max="${Math.max(0,Number(p.stock||0))}"`;
-    return `<tr><td>${image}</td><td><div class="admin-order-product-name">${x(p.name||p.nameEn||'—')}</div>${p.nameEn&&p.nameEn!==p.name?`<div class="admin-order-product-sub">${x(p.nameEn)}</div>`:''}</td><td class="bc">${x(p.barcode||'—')}</td><td>${p.stock==null?'未限制':Number(p.stock).toLocaleString()}</td><td><strong>${x(currency?.code||'')} ${Number(price||0).toLocaleString(undefined,{maximumFractionDigits:2})}</strong></td><td><input class="qty-input" style="width:78px;" type="number" min="1" step="1" ${max} value="${Number(item.qty||1)}" onchange="adminNewOrderQtyChanged(${index},this)"></td><td><button class="btn btn-sm btn-danger" type="button" onclick="removeProductFromAdminOrder(${index})">移除</button></td></tr>`;
+    return `<tr><td>${image}</td><td><div class="admin-order-product-name">${x(p.name||p.nameEn||'—')}</div>${p.nameEn&&p.nameEn!==p.name?`<div class="admin-order-product-sub">${x(p.nameEn)}</div>`:''}</td><td class="bc">${x(p.barcode||'—')}</td><td>${p.stock==null?'未限制':Number(p.stock).toLocaleString()}</td><td><strong>${x(currency?.code||'')} ${listPrice.toLocaleString(undefined,{maximumFractionDigits:2})}</strong></td><td><strong style="color:var(--accent-d);">${x(currency?.code||'')} ${channelPrice.toLocaleString(undefined,{maximumFractionDigits:2})}</strong></td><td><input class="qty-input" style="width:78px;" type="number" min="1" step="1" ${max} value="${Number(item.qty||1)}" onchange="adminNewOrderQtyChanged(${index},this)"></td><td><button class="btn btn-sm btn-danger" type="button" onclick="removeProductFromAdminOrder(${index})">移除</button></td></tr>`;
   }).join('')}</tbody></table></div>`;
   renderAdminOrderCreateSummary();
 }
