@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 <title>SEVERUS LIAN Order System</title>
-<meta name="build-version" content="20261006-admin-order-price-columns">
+<meta name="build-version" content="20261006-zh-order-pdf-pricing">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -261,6 +261,10 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 .pdf-doc .pdf-meta-label-en{font-size:8px;font-weight:400;margin-left:4px;}
 .pdf-doc .pdf-meta-value{font-size:11px;font-weight:500;color:#35332f;line-height:1.45;overflow-wrap:anywhere;}
 .pdf-doc .pdf-meta-status{display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;}
+.pdf-doc .pdf-fee-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:-8px 0 16px;padding:10px 12px;border:1px solid #dedbd2;border-radius:7px;background:#f7f5ef;}
+.pdf-doc .pdf-fee-item{text-align:center;min-width:0;}
+.pdf-doc .pdf-fee-label{font-size:9px;font-weight:600;color:#8d877e;margin-bottom:3px;}
+.pdf-doc .pdf-fee-value{font-size:11px;font-weight:600;color:#35332f;line-height:1.45;overflow-wrap:anywhere;}
 .pdf-doc table{width:100%;border-collapse:collapse;font-size:11px;}
 .pdf-doc th{background:#f0efe9;padding:7px 9px;text-align:left;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid #e0ded7;}
 .pdf-doc td{padding:8px 9px;border-bottom:1px solid #e0ded7;vertical-align:top;}
@@ -3078,10 +3082,10 @@ async function saveAdminCreatedOrder(btn){
   finally{btn.disabled=false;btn.textContent=oldText;}
 }
 const ORDER_DOC_TEXT={
-  en:{title:'Purchase Order',orderNo:'Order No.',channel:'Channel',date:'Order Date',status:'Status',currency:'Currency',product:'Product',barcode:'Barcode / SKU',unit:'Unit Price',qty:'Qty',subtotal:'Subtotal',total:'Order Total',pending:'Pending shipment',shipped:'Shipped',cancelled:'Cancelled'},
-  zh:{title:'採購訂單',orderNo:'訂單編號',channel:'通路商',date:'下單時間',status:'狀態',currency:'貨幣',product:'商品名稱',barcode:'條碼 / SKU',unit:'單價',qty:'數量',subtotal:'小計',total:'訂單總額',pending:'待出貨',shipped:'已出貨',cancelled:'已取消'},
-  ja:{title:'発注書',orderNo:'注文番号',channel:'販売チャネル',date:'注文日時',status:'ステータス',currency:'通貨',product:'商品名',barcode:'バーコード / SKU',unit:'単価',qty:'数量',subtotal:'小計',total:'注文合計',pending:'出荷待ち',shipped:'出荷済み',cancelled:'キャンセル済み'},
-  ko:{title:'구매 주문서',orderNo:'주문 번호',channel:'판매 채널',date:'주문 일시',status:'상태',currency:'통화',product:'상품명',barcode:'바코드 / SKU',unit:'단가',qty:'수량',subtotal:'소계',total:'주문 합계',pending:'배송 대기',shipped:'배송 완료',cancelled:'취소됨'}
+  en:{title:'Purchase Order',orderNo:'Order No.',channel:'Channel',date:'Order Date',status:'Status',currency:'Currency',product:'Product',barcode:'Barcode / SKU',listPrice:'List Price',channelPrice:'Channel Price',qty:'Qty',subtotal:'Subtotal',total:'Order Total',feeMethod:'Commission Method',feeRate:'Commission Rate',noFee:'No commission',percentageFee:'Percentage commission',fixedFee:'Fixed fee',pending:'Pending shipment',shipped:'Shipped',cancelled:'Cancelled'},
+  zh:{title:'採購訂單',orderNo:'訂單編號',channel:'通路商',date:'下單時間',status:'狀態',currency:'貨幣',product:'商品名稱',barcode:'條碼 / SKU',listPrice:'商品定價',channelPrice:'抽成後價格',qty:'數量',subtotal:'小計',total:'訂單總額',feeMethod:'抽成方式',feeRate:'抽成費率',noFee:'無抽成',percentageFee:'百分比抽成',fixedFee:'固定費用',pending:'待出貨',shipped:'已出貨',cancelled:'已取消'},
+  ja:{title:'発注書',orderNo:'注文番号',channel:'販売チャネル',date:'注文日時',status:'ステータス',currency:'通貨',product:'商品名',barcode:'バーコード / SKU',listPrice:'定価',channelPrice:'手数料控除後価格',qty:'数量',subtotal:'小計',total:'注文合計',feeMethod:'手数料方式',feeRate:'手数料率',noFee:'手数料なし',percentageFee:'料率手数料',fixedFee:'固定手数料',pending:'出荷待ち',shipped:'出荷済み',cancelled:'キャンセル済み'},
+  ko:{title:'구매 주문서',orderNo:'주문 번호',channel:'판매 채널',date:'주문 일시',status:'상태',currency:'통화',product:'상품명',barcode:'바코드 / SKU',listPrice:'정가',channelPrice:'수수료 적용가',qty:'수량',subtotal:'소계',total:'주문 합계',feeMethod:'수수료 방식',feeRate:'수수료율',noFee:'수수료 없음',percentageFee:'비율 수수료',fixedFee:'고정 수수료',pending:'배송 대기',shipped:'배송 완료',cancelled:'취소됨'}
 };
 function getOrderDocumentLanguage(o){
   const ch=(settings.channels||[]).find(c=>String(c.code||'').toUpperCase()===String(o.channel_code||'').toUpperCase());
@@ -3090,26 +3094,43 @@ function getOrderDocumentLanguage(o){
 function orderDocLabel(lang,key){
   const native=(ORDER_DOC_TEXT[lang]||ORDER_DOC_TEXT.en)[key]||ORDER_DOC_TEXT.en[key]||key;
   const english=ORDER_DOC_TEXT.en[key]||key;
+  if(lang==='zh')return x(native);
   return lang==='en'?x(english):`${x(native)}<br><span style="font-size:8px;font-weight:400;color:#8d877e;text-transform:none;letter-spacing:0;">${x(english)}</span>`;
 }
 function orderMetaLabel(lang,key){
   const native=(ORDER_DOC_TEXT[lang]||ORDER_DOC_TEXT.en)[key]||ORDER_DOC_TEXT.en[key]||key,english=ORDER_DOC_TEXT.en[key]||key;
+  if(lang==='zh')return x(native);
   return lang==='en'?x(english):`${x(native)}<span class="pdf-meta-label-en">/ ${x(english)}</span>`;
 }
 function buildAdminOrderPdfHtml(o){
   const lang=getOrderDocumentLanguage(o),T=ORDER_DOC_TEXT[lang]||ORDER_DOC_TEXT.en,code=o.currency_code||'TWD';
+  const channel=(settings.channels||[]).find(c=>String(c.code||'').toUpperCase()===String(o.channel_code||'').toUpperCase())||null;
+  const currency=(settings.currencies||[]).find(c=>String(c.code||'').toUpperCase()===String(code).toUpperCase())||{code,rate:code==='TWD'?1:0};
   const sym={TWD:'NT$',JPY:'¥',KRW:'₩',USD:'$',EUR:'€',GBP:'£'}[code]||(code+' '),productMap=Object.fromEntries(products.map(p=>[String(p.id),p]));
   const money=v=>sym+Number(v||0).toLocaleString(undefined,{maximumFractionDigits:2});
   const rows=(o.items||[]).map(i=>{
-    const p=productMap[String(i.productId)]||{},img=i.img||p.img||'',primary=lang==='zh'?(i.name||i.nameEn):(i.nameEn||i.name),secondary=lang==='zh'?i.nameEn:i.name;
+    const p=productMap[String(i.productId)]||{},img=i.img||p.img||'',primary=lang==='zh'?(i.name||p.name||i.nameEn||p.nameEn):(i.nameEn||p.nameEn||i.name||p.name),secondary=lang==='zh'?'':(i.name||p.name);
+    const pricing=p.id&&channel&&currency?calcProductPrice(p,channel,currency):null;
+    const pctTotal=(channel?.fees||[]).filter(f=>f.type==='pct').reduce((sum,f)=>sum+(parseFloat(f.value)||0),0);
+    const fixedTwd=(channel?.fees||[]).filter(f=>f.type==='fixed').reduce((sum,f)=>sum+(parseFloat(f.value)||0),0);
+    const rate=Number(currency.rate||0),denominator=1-pctTotal/100;
+    const fallbackList=denominator>0?(Number(i.unitAmount||0)-fixedTwd*rate)/denominator:Number(i.unitAmount||0);
+    const listAmount=pricing?(pricing.isForeignOverride?Number(pricing.foreignOverrideAmt||0):Number(pricing.baseTwd||0)*rate):Math.max(0,fallbackList);
+    const channelAmount=Number(i.unitAmount||pricing?.displayAmt||0);
     const imgCell=img?`<td style="padding:5px;"><img src="${x(img)}" crossorigin="anonymous" referrerpolicy="no-referrer" style="width:54px;height:54px;object-fit:cover;border-radius:4px;display:block;"></td>`:`<td style="padding:5px;"><div style="width:54px;height:54px;background:#f0efe9;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:18px;">📦</div></td>`;
-    return `<tr>${imgCell}<td><strong>${x(primary||'—')}</strong>${secondary&&secondary!==primary?`<br><span style="font-size:9px;color:#8d877e;">${x(secondary)}</span>`:''}</td><td>${x(i.barcode||'—')}</td><td>${money(i.unitAmount)}</td><td style="text-align:center;">${Number(i.qty||0)}</td><td class="price">${money(i.subtotal!=null?i.subtotal:Number(i.unitAmount||0)*Number(i.qty||0))}${code!=='TWD'?`<br><span class="twd">NT$ ${Math.round(Number(i.subtotalTwd||0)).toLocaleString()}</span>`:''}</td></tr>`;
+    return `<tr>${imgCell}<td><strong style="font-size:11px;">${x(primary||'—')}</strong>${secondary&&secondary!==primary?`<br><span style="font-size:9px;color:#8d877e;">${x(secondary)}</span>`:''}</td><td>${x(i.barcode||p.barcode||'—')}</td><td>${money(listAmount)}</td><td class="price">${money(channelAmount)}</td><td style="text-align:center;">${Number(i.qty||0)}</td><td class="price">${money(i.subtotal!=null?i.subtotal:channelAmount*Number(i.qty||0))}${code!=='TWD'?`<br><span class="twd">NT$ ${Math.round(Number(i.subtotalTwd||0)).toLocaleString()}</span>`:''}</td></tr>`;
   }).join('');
-  const statusNative=T[o.status]||T.cancelled,status=lang==='en'?x(statusNative):`${x(statusNative)} <span style="font-size:9px;color:#8d877e;">${x(ORDER_DOC_TEXT.en[o.status]||'')}</span>`;
+  const statusNative=T[o.status]||T.cancelled,status=(lang==='en'||lang==='zh')?x(statusNative):`${x(statusNative)} <span style="font-size:9px;color:#8d877e;">${x(ORDER_DOC_TEXT.en[o.status]||'')}</span>`;
   const total=money(o.total_amount),totalTwd=`NT$ ${Math.round(Number(o.total_twd||0)).toLocaleString()}`,locale={zh:'zh-TW',ja:'ja-JP',ko:'ko-KR',en:'en-US'}[lang]||'en-US';
-  const titleNative=T.title||ORDER_DOC_TEXT.en.title,title=lang==='en'?x(titleNative):`${x(titleNative)}<span class="pdf-title-en">${x(ORDER_DOC_TEXT.en.title)}</span>`;
+  const titleNative=T.title||ORDER_DOC_TEXT.en.title,title=(lang==='en'||lang==='zh')?x(titleNative):`${x(titleNative)}<span class="pdf-title-en">${x(ORDER_DOC_TEXT.en.title)}</span>`;
   const channelValue=`${x(o.channel_name)}${o.buyer_email?` &lt;${x(o.buyer_email)}&gt;`:''}`;
-  return `<div class="pdf-doc"><h2>${settings.brand?x(settings.brand)+' — ':''}${title}</h2><div class="pdf-meta"><div class="pdf-meta-grid"><div class="pdf-meta-item"><div class="pdf-meta-label">${orderMetaLabel(lang,'orderNo')}</div><div class="pdf-meta-value">${x(o.order_no)}</div></div><div class="pdf-meta-item"><div class="pdf-meta-label">${orderMetaLabel(lang,'channel')}</div><div class="pdf-meta-value">${channelValue}</div></div><div class="pdf-meta-item"><div class="pdf-meta-label">${orderMetaLabel(lang,'date')}</div><div class="pdf-meta-value">${new Date(o.created_at).toLocaleString(locale)}</div></div><div class="pdf-meta-item"><div class="pdf-meta-label">${orderMetaLabel(lang,'status')} &nbsp;·&nbsp; ${orderMetaLabel(lang,'currency')}</div><div class="pdf-meta-value pdf-meta-status"><span>${status}</span><span>${x(code)}</span></div></div></div></div><table><thead><tr><th style="width:64px;"></th><th>${orderDocLabel(lang,'product')}</th><th>${orderDocLabel(lang,'barcode')}</th><th>${orderDocLabel(lang,'unit')}</th><th style="text-align:center;">${orderDocLabel(lang,'qty')}</th><th>${orderDocLabel(lang,'subtotal')}</th></tr></thead><tbody>${rows}<tr class="grand"><td colspan="5" style="text-align:right;">${orderDocLabel(lang,'total')}</td><td>${total}${code!=='TWD'?`<br><span class="twd">${totalTwd}</span>`:''}</td></tr></tbody></table><div class="footer">${x(settings.brand||'SEVERUS LIAN')} · ${x(o.order_no)}</div></div>`;
+  const fees=channel?.fees||[],feeTypes=[];
+  if(fees.some(f=>f.type==='pct'))feeTypes.push(T.percentageFee);
+  if(fees.some(f=>f.type==='fixed'))feeTypes.push(T.fixedFee);
+  const feeMethod=feeTypes.join(' + ')||T.noFee;
+  const feeRate=fees.map(f=>`${x(f.label||((f.type==='pct'?T.percentageFee:T.fixedFee)))}：${f.type==='pct'?(parseFloat(f.value)||0)+'%':'NT$ '+(parseFloat(f.value)||0).toLocaleString()}`).join(' ／ ')||T.noFee;
+  const feeSummary=`<div class="pdf-fee-summary"><div class="pdf-fee-item"><div class="pdf-fee-label">${orderMetaLabel(lang,'feeMethod')}</div><div class="pdf-fee-value">${x(feeMethod)}</div></div><div class="pdf-fee-item"><div class="pdf-fee-label">${orderMetaLabel(lang,'feeRate')}</div><div class="pdf-fee-value">${feeRate}</div></div></div>`;
+  return `<div class="pdf-doc"><h2>${settings.brand?x(settings.brand)+' — ':''}${title}</h2><div class="pdf-meta"><div class="pdf-meta-grid"><div class="pdf-meta-item"><div class="pdf-meta-label">${orderMetaLabel(lang,'orderNo')}</div><div class="pdf-meta-value">${x(o.order_no)}</div></div><div class="pdf-meta-item"><div class="pdf-meta-label">${orderMetaLabel(lang,'channel')}</div><div class="pdf-meta-value">${channelValue}</div></div><div class="pdf-meta-item"><div class="pdf-meta-label">${orderMetaLabel(lang,'date')}</div><div class="pdf-meta-value">${new Date(o.created_at).toLocaleString(locale)}</div></div><div class="pdf-meta-item"><div class="pdf-meta-label">${orderMetaLabel(lang,'status')} &nbsp;·&nbsp; ${orderMetaLabel(lang,'currency')}</div><div class="pdf-meta-value pdf-meta-status"><span>${status}</span><span>${x(code)}</span></div></div></div></div>${feeSummary}<table><thead><tr><th style="width:64px;"></th><th>${orderDocLabel(lang,'product')}</th><th>${orderDocLabel(lang,'barcode')}</th><th>${orderDocLabel(lang,'listPrice')}</th><th>${orderDocLabel(lang,'channelPrice')}</th><th style="text-align:center;">${orderDocLabel(lang,'qty')}</th><th>${orderDocLabel(lang,'subtotal')}</th></tr></thead><tbody>${rows}<tr class="grand"><td colspan="6" style="text-align:right;">${orderDocLabel(lang,'total')}</td><td>${total}${code!=='TWD'?`<br><span class="twd">${totalTwd}</span>`:''}</td></tr></tbody></table><div class="footer">${x(settings.brand||'SEVERUS LIAN')} · ${x(o.order_no)}</div></div>`;
 }
 function viewAdminOrderPdf(id){
   const o=orders.find(v=>v.id===id);if(!o){alert('找不到此訂單');return;}
