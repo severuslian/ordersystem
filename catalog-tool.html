@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 <title>SEVERUS LIAN Order System</title>
-<meta name="build-version" content="20261016-category-save-race-fix">
+<meta name="build-version" content="20261016-cloud-health-monthly-backup">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -409,16 +409,26 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
                 <div style="font-size:10px;color:var(--hint);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;">最近自動備份</div>
                 <div id="last-backup-display" style="font-size:12px;font-weight:500;color:var(--text);">—</div>
               </div>
+              <div>
+                <div style="font-size:10px;color:var(--hint);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;">最近完整檢查</div>
+                <div id="last-health-display" style="font-size:12px;font-weight:500;color:var(--text);">—</div>
+              </div>
+              <div>
+                <div style="font-size:10px;color:var(--hint);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;">最近月度完整備份</div>
+                <div id="last-monthly-backup-display" style="font-size:12px;font-weight:500;color:var(--text);">—</div>
+              </div>
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
               <button class="btn btn-sm" onclick="downloadBackup()">⬇ 手動備份 JSON</button>
+              <button class="btn btn-sm" onclick="runSupabaseHealthCheck(false)">🩺 立即完整檢查</button>
+              <button class="btn btn-sm btn-primary" onclick="downloadMonthlyFullBackup(false)">📦 下載月度完整備份 ZIP</button>
               <label class="btn btn-sm" style="cursor:pointer;">
                 ⬆ 從備份還原
                 <input type="file" accept=".json" style="display:none;" onchange="restoreBackup(this.files[0])">
               </label>
               <button class="btn btn-sm" onclick="pushToCloud()">☁️ 上傳到雲端</button>
             </div>
-            <div style="font-size:11px;color:var(--hint);margin-top:8px;">自動每 5 天 ping 雲端防暫停・每 6 天自動下載備份</div>
+            <div style="font-size:11px;color:var(--hint);margin-top:8px;line-height:1.7;">管理員登入後每 5 天檢查商品、分類、訂單與全部商品圖片・每 6 天下載 JSON・每月提醒下載含雲端商品圖片與訂單資料的完整 ZIP</div>
           </div>
         </div>
         <div class="settings-section">
@@ -849,8 +859,12 @@ async function sbFetch(method, table, body=null, query=''){
 function updateSyncStatus(){
   const PING_KEY = 'sl_last_ping';
   const BACKUP_KEY = 'sl_last_backup';
+  const HEALTH_KEY = 'sl_last_health';
+  const MONTHLY_KEY = 'sl_last_monthly_backup';
   const pingEl = document.getElementById('last-ping-display');
   const backupEl = document.getElementById('last-backup-display');
+  const healthEl = document.getElementById('last-health-display');
+  const monthlyEl = document.getElementById('last-monthly-backup-display');
   function fmt(ts){
     if(!ts||ts==='0') return '尚未記錄';
     const d = new Date(parseInt(ts));
@@ -863,18 +877,23 @@ function updateSyncStatus(){
   }
   if(pingEl) pingEl.textContent = fmt(localStorage.getItem(PING_KEY));
   if(backupEl) backupEl.textContent = fmt(localStorage.getItem(BACKUP_KEY));
+  if(healthEl){
+    const raw=localStorage.getItem(HEALTH_KEY);let report=null;
+    try{report=raw?JSON.parse(raw):null;}catch(error){console.warn('Invalid health history:',error);}
+    healthEl.textContent=report?`${fmt(report.checkedAt)}・${report.ok?'正常':'需注意'}`:'尚未記錄';
+    healthEl.style.color=report&&!report.ok?'var(--err)':'var(--text)';
+  }
+  if(monthlyEl) monthlyEl.textContent = fmt(localStorage.getItem(MONTHLY_KEY));
 }
 
+let autoPingStarted=false;
 function setupAutoPing(){
+  if(autoPingStarted)return;
+  autoPingStarted=true;
   const PING_KEY = 'sl_last_ping';
   const FIVE_DAYS = 5 * 24 * 60 * 60 * 1000;
   async function ping(){
-    try {
-      await sbClient.functions.invoke('settings-config',{body:{}});
-      localStorage.setItem(PING_KEY, Date.now().toString());
-      updateSyncStatus();
-      console.log('Supabase ping OK:', new Date().toLocaleString());
-    } catch(e){ console.warn('Ping failed:', e); }
+    await runSupabaseHealthCheck(true);
   }
   // Check if we need to ping now
   const last = parseInt(localStorage.getItem(PING_KEY)||'0');
@@ -884,7 +903,10 @@ function setupAutoPing(){
 }
 
 // ── AUTO BACKUP (every 6 days, download JSON) ──
+let autoBackupStarted=false;
 function setupAutoBackup(){
+  if(autoBackupStarted)return;
+  autoBackupStarted=true;
   const BACKUP_KEY = 'sl_last_backup';
   const SIX_DAYS = 6 * 24 * 60 * 60 * 1000;
   function doBackup(){
@@ -911,6 +933,117 @@ function setupAutoBackup(){
     setTimeout(doBackup, 3000);
   }
   setInterval(doBackup, SIX_DAYS);
+}
+
+async function mapWithConcurrency(items,limit,worker){
+  const results=new Array(items.length);let cursor=0;
+  async function run(){
+    while(cursor<items.length){const index=cursor++;results[index]=await worker(items[index],index);}
+  }
+  await Promise.all(Array.from({length:Math.min(limit,items.length)},run));
+  return results;
+}
+async function runSupabaseHealthCheck(silent=false){
+  if(!supplierAccessToken){if(!silent)alert('請先登入管理員後台');return null;}
+  if(!silent)showToast('🩺 正在檢查雲端資料與商品圖片…');
+  const checkedAt=Date.now(),issues=[];
+  try{
+    const [cloudProducts,cloudCategories,orderResult]=await Promise.all([
+      sbFetch('GET','sl_products','','?select=id,name,barcode,cats,img&order=sort_order.asc&limit=1000'),
+      sbFetch('GET','sl_categories','','?select=name&order=sort_order.asc&limit=500'),
+      sbClient.functions.invoke('admin-orders',{body:{action:'list',accessToken:supplierAccessToken}})
+    ]);
+    if(!Array.isArray(cloudProducts))throw new Error('商品資料無法讀取');
+    if(!Array.isArray(cloudCategories))throw new Error('分類資料無法讀取');
+    if(orderResult.error||orderResult.data?.error)throw new Error('訂單資料無法讀取');
+    const categorySet=new Set(cloudCategories.map(row=>String(row.name||'').trim()));
+    const barcodeSet=new Set(),duplicateBarcodes=[];
+    cloudProducts.forEach(product=>{
+      const barcode=String(product.barcode||'').trim();
+      if(barcode){if(barcodeSet.has(barcode))duplicateBarcodes.push(barcode);barcodeSet.add(barcode);}
+      (product.cats||[]).forEach(category=>{if(category&&!categorySet.has(category))issues.push(`分類遺失：${category}`);});
+    });
+    if(duplicateBarcodes.length)issues.push(`發現 ${duplicateBarcodes.length} 個重複條碼`);
+    const imageProducts=cloudProducts.filter(product=>String(product.img||'').trim());
+    const imageChecks=await mapWithConcurrency(imageProducts,6,async product=>{
+      try{
+        const response=await fetch(product.img,{method:'HEAD',cache:'no-store'});
+        return {id:product.id,name:product.name,url:product.img,ok:response.ok,status:response.status};
+      }catch(error){return {id:product.id,name:product.name,url:product.img,ok:false,status:0};}
+    });
+    const brokenImages=imageChecks.filter(item=>!item.ok);
+    if(brokenImages.length)issues.push(`${brokenImages.length} 張商品圖片無法讀取`);
+    const report={
+      checkedAt,ok:issues.length===0,productCount:cloudProducts.length,
+      categoryCount:cloudCategories.length,orderCount:(orderResult.data?.orders||[]).length,
+      imageCount:imageProducts.length,brokenImages,issues:[...new Set(issues)]
+    };
+    localStorage.setItem('sl_last_health',JSON.stringify(report));
+    localStorage.setItem('sl_last_ping',String(checkedAt));
+    updateSyncStatus();
+    const summary=`${report.productCount} 件商品・${report.imageCount} 張圖片・${report.orderCount} 筆訂單`;
+    if(report.ok)showToast(`✅ 雲端完整檢查正常：${summary}`);
+    else showToast(`⚠️ 雲端檢查發現問題：${report.issues.join('、')}`,true);
+    return report;
+  }catch(error){
+    const report={checkedAt,ok:false,productCount:0,categoryCount:0,orderCount:0,imageCount:0,brokenImages:[],issues:[error.message||'雲端檢查失敗']};
+    localStorage.setItem('sl_last_health',JSON.stringify(report));updateSyncStatus();
+    if(!silent)alert(`完整檢查失敗：${report.issues[0]}`);else console.warn('Cloud health check failed:',error);
+    return report;
+  }
+}
+function archiveSafeName(value){
+  return String(value||'file').replace(/[\\/:*?"<>|]+/g,'_').replace(/\s+/g,' ').trim().slice(0,80)||'file';
+}
+function imageExtension(blob,url){
+  const byType={'image/jpeg':'jpg','image/png':'png','image/webp':'webp','image/gif':'gif'}[blob.type];
+  if(byType)return byType;
+  const match=String(url||'').split('?')[0].match(/\.([a-zA-Z0-9]{2,5})$/);return match?match[1].toLowerCase():'jpg';
+}
+async function downloadMonthlyFullBackup(automatic=false){
+  if(!supplierAccessToken){if(!automatic)alert('請先登入管理員後台');return false;}
+  if(typeof JSZip==='undefined'){alert('ZIP 元件尚未載入，請重新整理後再試');return false;}
+  try{
+    showToast('📦 正在整理月度完整備份，請勿關閉頁面…');
+    const synced=await persist();
+    if(!synced)throw new Error('最新商品資料尚未完整同步至雲端，請先檢查網路後重試');
+    await loadFromSupabase(supplierAccessToken);
+    const {data,error}=await sbClient.functions.invoke('admin-orders',{body:{action:'list',accessToken:supplierAccessToken}});
+    if(error||data?.error)throw new Error('訂單資料讀取失敗，請重新登入後再試');
+    const backupOrders=data.orders||[],zip=new JSZip(),date=new Date(),stamp=date.toLocaleDateString('en-CA');
+    const fullBackup={version:6,date:date.toISOString(),products,settings,categories,orders:backupOrders};
+    zip.file('資料/catalog-backup.json',JSON.stringify(fullBackup,null,2));
+    zip.file('資料/orders.json',JSON.stringify({date:date.toISOString(),orders:backupOrders},null,2));
+    zip.file('資料/README.txt','SEVERUS LIAN 月度完整備份\n\n包含：商品、設定、分類、訂單，以及 Supabase Storage 目前保存的商品圖片。\n圖片資料夾內是雲端實際保存版本；條碼 PNG 可由商品條碼數字重新產生。\n');
+    const imageProducts=products.filter(product=>String(product.img||'').trim()),failed=[];
+    await mapWithConcurrency(imageProducts,4,async (product,index)=>{
+      try{
+        const response=await fetch(product.img,{cache:'no-store'});
+        if(!response.ok)throw new Error(`HTTP ${response.status}`);
+        const blob=await response.blob(),ext=imageExtension(blob,product.img);
+        const name=`${String(index+1).padStart(3,'0')}_${archiveSafeName(product.name||product.nameEn)}_${archiveSafeName(product.barcode||product.id)}.${ext}`;
+        zip.file(`商品圖片/${name}`,blob);
+      }catch(error){failed.push({id:product.id,name:product.name,url:product.img,error:error.message||'下載失敗'});}
+    });
+    zip.file('資料/image-backup-report.json',JSON.stringify({expected:imageProducts.length,saved:imageProducts.length-failed.length,failed},null,2));
+    const blob=await zip.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:6}});
+    const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download=`SL_monthly_full_backup_${stamp}.zip`;link.click();setTimeout(()=>URL.revokeObjectURL(link.href),2000);
+    localStorage.setItem('sl_last_monthly_backup',String(Date.now()));updateSyncStatus();
+    if(failed.length)showToast(`⚠️ 完整備份已下載，但有 ${failed.length} 張圖片失敗，詳見 ZIP 報告`,true);
+    else showToast(`✅ 月度完整備份完成：${imageProducts.length} 張圖片・${backupOrders.length} 筆訂單`);
+    return true;
+  }catch(error){alert(`月度完整備份失敗：${error.message||error}`);return false;}
+}
+let monthlyBackupStarted=false;
+function setupMonthlyFullBackup(){
+  if(monthlyBackupStarted)return;monthlyBackupStarted=true;
+  const MONTH=30*24*60*60*1000,last=parseInt(localStorage.getItem('sl_last_monthly_backup')||'0');
+  if(Date.now()-last>MONTH){
+    setTimeout(()=>{
+      if(confirm('📦 月度完整備份到期\n\n現在要下載包含商品圖片與訂單資料的 ZIP 嗎？'))downloadMonthlyFullBackup(true);
+      else showToast('可稍後到「設定」下載月度完整備份');
+    },7000);
+  }
 }
 
 // ── MANUAL BACKUP & RESTORE ──
@@ -1155,6 +1288,9 @@ async function enterSupplier(){
   document.getElementById('gate').style.display='none';
   document.getElementById('app-supplier').style.display='flex';
   startAutoUpload();
+  setupAutoPing();
+  setupAutoBackup();
+  setupMonthlyFullBackup();
   loadFromSupabase(supplierAccessToken).then(()=>{
     renderProducts(); renderSettingsForms(); populateExportSelects();
     document.getElementById('set-brand').value=settings.brand||'';
@@ -3568,8 +3704,6 @@ function x(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').re
     renderProducts();
   }
   document.getElementById('gate').style.display = 'flex';
-  setupAutoPing();
-  setupAutoBackup();
 })();
 </script>
 <script>
