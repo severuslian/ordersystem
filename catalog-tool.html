@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 <title>SEVERUS LIAN Order System</title>
-<meta name="build-version" content="20261012-ean13-barcode-generator">
+<meta name="build-version" content="20261016-category-save-race-fix">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -974,7 +974,18 @@ let activeCatFilter=''; // '' = all
 let dragSrcId=null;
 
 // ── SUPABASE SYNC ──
-async function persist(){
+let persistQueue=Promise.resolve();
+function persist(){
+  // Category creation and product saving can happen only seconds apart. Run cloud
+  // writes in order so two DELETE/INSERT category syncs cannot collide.
+  localStorage.setItem('cp_products', JSON.stringify(products));
+  localStorage.setItem('cp_settings', JSON.stringify(settings));
+  localStorage.setItem('cp_categories', JSON.stringify(categories));
+  const run=persistQueue.then(()=>persistNow());
+  persistQueue=run.catch(()=>false);
+  return run;
+}
+async function persistNow(){
   // Save to localStorage first
   localStorage.setItem('cp_products', JSON.stringify(products));
   localStorage.setItem('cp_settings', JSON.stringify(settings));
@@ -1089,8 +1100,16 @@ async function loadFromSupabase(accessToken=''){
     }
     // Load categories
     const cats = await sbFetch('GET','sl_categories','','?order=sort_order.asc&limit=200');
-    if(cats && cats.length>0){
-      categories = cats.map(c=>c.name);
+    if(cats && cats.length>=0){
+      const savedCategories=cats.map(c=>c.name);
+      const productCategories=[];
+      products.forEach(product=>(product.cats||[]).forEach(category=>{
+        const name=String(category||'').trim();
+        if(name&&!productCategories.includes(name))productCategories.push(name);
+      }));
+      // Recover a category automatically if an older interrupted sync saved the
+      // product first but did not finish saving its newly-created category.
+      categories=[...savedCategories,...productCategories.filter(name=>!savedCategories.includes(name))];
       localStorage.setItem('cp_categories', JSON.stringify(categories));
     }
   } catch(e){
