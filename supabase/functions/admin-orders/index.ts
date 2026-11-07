@@ -74,7 +74,10 @@ Deno.serve(async (req) => {
         p_channel_code: code,
         p_currency_code: currencyCode,
         p_language: String(channel.lang || body.language || "en"),
-        p_items: body.items,
+        p_items: body.items.map((item: any) => ({
+          productId: String(item?.productId || "").trim(),
+          qty: item?.qty,
+        })),
       });
       if (error) {
         const message = String(error.message || "");
