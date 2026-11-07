@@ -110,12 +110,34 @@ Deno.serve(async (req) => {
     );
     if (!channel) return J({ error: "INVALID_CHANNEL_CODE" }, 403);
 
+    if (!Array.isArray(body.items) || !body.items.length) {
+      return J({ error: "EMPTY_ORDER" }, 400);
+    }
+    const productIds = [...new Set(body.items.map((item: any) => String(item?.productId || "").trim()).filter(Boolean))];
+    const { data: requestedProducts, error: productsError } = await sb.from("sl_products")
+      .select("id,channel_prices").in("id", productIds);
+    if (productsError) throw productsError;
+    if ((requestedProducts || []).length !== productIds.length) {
+      return J({ error: "PRODUCT_NOT_FOUND" }, 400);
+    }
+    const hiddenProduct = (requestedProducts || []).find((product: any) =>
+      product.channel_prices?.[channel.name]?.hidden === true
+    );
+    if (hiddenProduct) {
+      return J({ error: "PRODUCT_HIDDEN", productId: hiddenProduct.id }, 400);
+    }
+
     const { data, error } = await sb.rpc("sl_create_order_atomic", {
       p_buyer_email: String(channel.email || "").trim().toLowerCase(),
       p_channel_code: code,
       p_currency_code: body.currencyCode,
       p_language: String(channel.lang || body.language || "en"),
-      p_items: body.items,
+      // Price fields from the browser are intentionally discarded. The database
+      // calculates authoritative channel pricing and product-specific commission.
+      p_items: body.items.map((item: any) => ({
+        productId: String(item.productId || "").trim(),
+        qty: item.qty,
+      })),
     });
     if (error) {
       if (
