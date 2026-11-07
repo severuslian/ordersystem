@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 <title>SEVERUS LIAN Order System</title>
-<meta name="build-version" content="20261107-out-of-stock-filter">
+<meta name="build-version" content="20261107-channel-product-rules">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -1814,30 +1814,48 @@ function openPModal(id){
         </div>`).join('')
     : '<div style="font-size:12px;color:var(--hint);">請先在設定中新增外幣匯率</div>';
 
-  // render channel-specific price fields
+  // render channel-specific visibility, pricing and commission fields
   const chPrices = pdata.channelPrices||{};
   document.getElementById('p-channel-prices').innerHTML = settings.channels.length
     ? settings.channels.map((ch,i)=>{
         const saved = chPrices[ch.name]||{};
         return `
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;padding:9px 12px;border:1px solid var(--border);border-radius:var(--rs);background:${saved.enabled?'var(--accent-l)':'var(--surface)'};" id="p-ch-row-${i}">
-          <input type="checkbox" id="p-ch-en-${i}" ${saved.enabled?'checked':''}
-            onchange="document.getElementById('p-ch-row-${i}').style.background=this.checked?'var(--accent-l)':'var(--surface)';document.getElementById('p-ch-price-${i}').disabled=!this.checked;"
-            style="width:15px;height:15px;accent-color:var(--accent);flex-shrink:0;">
-          <label style="font-size:13px;font-weight:500;flex:0 0 140px;cursor:pointer;" for="p-ch-en-${i}">${x(ch.name)}</label>
-          <div style="display:flex;align-items:center;gap:6px;flex:1;">
-            <span style="font-size:12px;color:var(--muted);">特定台幣定價：NT$</span>
-            <input class="form-input" id="p-ch-price-${i}" type="number" step="1"
-              placeholder="${pdata.price||'同預設定價'}"
-              value="${saved.price||''}" ${saved.enabled?'':'disabled'}
-              style="width:110px;">
+        <div style="margin-bottom:10px;padding:11px 12px;border:1px solid var(--border);border-radius:var(--rs);background:var(--surface);" id="p-ch-row-${i}">
+          <div style="font-size:13px;font-weight:600;margin-bottom:9px;">${x(ch.name)}</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:9px 14px;">
+            <label style="display:flex;align-items:center;gap:7px;font-size:12px;cursor:pointer;">
+              <input type="checkbox" id="p-ch-en-${i}" ${saved.enabled?'checked':''} onchange="updateProductChannelRuleRow(${i})" style="width:15px;height:15px;accent-color:var(--accent);">
+              <span>特定台幣定價：NT$</span>
+              <input class="form-input" id="p-ch-price-${i}" type="number" min="0" step="1" placeholder="${pdata.price||'同預設定價'}" value="${saved.price||''}" ${saved.enabled?'':'disabled'} style="width:100px;">
+            </label>
+            <label style="display:flex;align-items:center;gap:7px;font-size:12px;cursor:pointer;color:var(--err);">
+              <input type="checkbox" id="p-ch-hide-${i}" ${saved.hidden?'checked':''} onchange="updateProductChannelRuleRow(${i})" style="width:15px;height:15px;accent-color:var(--err);">
+              對此通路隱藏商品
+            </label>
+            <label style="display:flex;align-items:center;gap:7px;font-size:12px;cursor:pointer;">
+              <input type="checkbox" id="p-ch-rate-en-${i}" ${saved.customRateEnabled?'checked':''} onchange="updateProductChannelRuleRow(${i})" style="width:15px;height:15px;accent-color:var(--warn);">
+              <span>商品專屬抽成</span>
+              <input class="form-input" id="p-ch-rate-${i}" type="number" min="0" max="100" step="0.1" placeholder="%" value="${saved.customRate??''}" ${saved.customRateEnabled?'':'disabled'} style="width:82px;">
+              <span>%</span>
+            </label>
           </div>
+          <div style="font-size:10px;color:var(--hint);margin-top:7px;">專屬抽成會取代此商品在該通路的百分比抽成；固定費用仍照通路設定計算。</div>
         </div>`;
       }).join('')
     : '<div style="font-size:12px;color:var(--hint);">請先在設定中新增通路商</div>';
+  settings.channels.forEach((_,index)=>updateProductChannelRuleRow(index));
 
   document.getElementById('p-modal').classList.remove('hidden');
   updateProductBarcodeUI();
+}
+function updateProductChannelRuleRow(index){
+  const priceEnabled=document.getElementById('p-ch-en-'+index)?.checked;
+  const hidden=document.getElementById('p-ch-hide-'+index)?.checked;
+  const rateEnabled=document.getElementById('p-ch-rate-en-'+index)?.checked;
+  const price=document.getElementById('p-ch-price-'+index),rate=document.getElementById('p-ch-rate-'+index),row=document.getElementById('p-ch-row-'+index);
+  if(price)price.disabled=!priceEnabled;
+  if(rate)rate.disabled=!rateEnabled;
+  if(row)row.style.background=hidden?'var(--err-bg)':rateEnabled?'var(--warn-bg)':priceEnabled?'var(--accent-l)':'var(--surface)';
 }
 function closePModal(){autoGeneratedBarcode='';document.getElementById('p-modal').classList.add('hidden');}
 function handleImg(ev){
@@ -1879,9 +1897,16 @@ async function saveProduct(){
     settings.channels.forEach((ch,i)=>{
       const enEl=document.getElementById('p-ch-en-'+i);
       const prEl=document.getElementById('p-ch-price-'+i);
-      if(enEl&&enEl.checked){
-        channelPrices[ch.name]={enabled:true, price:parseFloat(prEl&&prEl.value)||0};
+      const hideEl=document.getElementById('p-ch-hide-'+i),rateEnEl=document.getElementById('p-ch-rate-en-'+i),rateEl=document.getElementById('p-ch-rate-'+i);
+      const rule={};
+      if(enEl?.checked){rule.enabled=true;rule.price=parseFloat(prEl?.value)||0;}
+      if(hideEl?.checked)rule.hidden=true;
+      if(rateEnEl?.checked){
+        const raw=String(rateEl?.value??'').trim(),rate=Number(raw);
+        if(raw===''||!Number.isFinite(rate)||rate<0||rate>100)throw new Error(`「${ch.name}」的商品專屬抽成必須是 0～100%`);
+        rule.customRateEnabled=true;rule.customRate=rate;
       }
+      if(Object.keys(rule).length)channelPrices[ch.name]=rule;
     });
 
     const productId = editingId || Date.now().toString();
@@ -2037,7 +2062,7 @@ function isOutOfStock(p){
 function removeUnavailableOrderQtys(){
   let changed=false;
   products.forEach(p=>{
-    if(isOutOfStock(p) && orderQtys[p.id]){
+    if((isOutOfStock(p)||isProductHiddenForChannel(p,buyerChannel)) && orderQtys[p.id]){
       delete orderQtys[p.id];
       changed=true;
     }
@@ -2065,6 +2090,38 @@ function stockBadgeAdmin(p){
 
 // ── PRICE HELPERS ──
 
+function productChannelRule(product,ch){
+  return product&&ch?((product.channelPrices||{})[ch.name]||{}):{};
+}
+function isProductHiddenForChannel(product,ch){
+  return productChannelRule(product,ch).hidden===true;
+}
+function visibleProductsForChannel(ch){
+  return ch?products.filter(product=>!isProductHiddenForChannel(product,ch)):[...products];
+}
+function channelFixedFee(ch){
+  return (ch?.fees||[]).filter(fee=>fee.type==='fixed').reduce((sum,fee)=>sum+(parseFloat(fee.value)||0),0);
+}
+function effectiveChannelPercentage(product,ch){
+  const rule=productChannelRule(product,ch);
+  if(rule.customRateEnabled===true){
+    const rate=Number(rule.customRate);
+    if(Number.isFinite(rate))return Math.min(100,Math.max(0,rate));
+  }
+  return (ch?.fees||[]).filter(fee=>fee.type==='pct').reduce((sum,fee)=>sum+(parseFloat(fee.value)||0),0);
+}
+function hasCustomChannelPercentage(product,ch){
+  return productChannelRule(product,ch).customRateEnabled===true;
+}
+function effectiveProductFees(product,ch){
+  const fees=ch?.fees||[];
+  if(!hasCustomChannelPercentage(product,ch))return fees;
+  return [{label:'商品專屬抽成',type:'pct',value:effectiveChannelPercentage(product,ch),note:''},...fees.filter(fee=>fee.type==='fixed')];
+}
+function productFeeDescription(product,ch,isEnglish=false,separator=' | '){
+  return effectiveProductFees(product,ch).map(fee=>`${hasCustomChannelPercentage(product,ch)&&fee.type==='pct'?(isEnglish?'Product-specific commission':'商品專屬抽成'):(fee.label||'fee')}: ${fee.type==='pct'?fee.value+'%':'NT$'+(parseFloat(fee.value)||0)}`).join(separator);
+}
+
 // Get effective TWD base price for a product, respecting channel-specific override
 function getBaseTwd(product, ch){
   if(!product) return 0;
@@ -2077,14 +2134,13 @@ function getBaseTwd(product, ch){
 
 // (getDisplayTwd removed - unused)
 
-function calcFinal(twdPrice, ch){
+function calcFinal(twdPrice, ch, product=null){
   // 採購金額 = 商品定價 × (1 - 通路抽成率) + 固定費用
   // 例：300 × (1-45%) = 165
   let p=parseFloat(twdPrice)||0;
   if(ch){
-    const fees=ch.fees||[];
-    const pct=fees.filter(f=>f.type==='pct').reduce((s,f)=>s+(parseFloat(f.value)||0),0);
-    const fix=fees.filter(f=>f.type==='fixed').reduce((s,f)=>s+(parseFloat(f.value)||0),0);
+    const pct=effectiveChannelPercentage(product,ch);
+    const fix=channelFixedFee(ch);
     p = p * (1 - pct/100) + fix;
   }
   return p;
@@ -2103,15 +2159,14 @@ function calcProductPrice(product, ch, curr){
     const fpVal = parseFloat(fp);
     let finalAmt = fpVal;
     if(ch){
-      const fees=ch.fees||[];
-      const pct=fees.filter(f=>f.type==='pct').reduce((s,f)=>s+(parseFloat(f.value)||0),0);
-      const fix=fees.filter(f=>f.type==='fixed').reduce((s,f)=>s+(parseFloat(f.value)||0),0);
+      const pct=effectiveChannelPercentage(product,ch);
+      const fix=channelFixedFee(ch);
       // fix is in TWD, convert to curr
       finalAmt = fpVal * (1 - pct/100) + fix * curr.rate;
     }
     return { displayAmt: finalAmt, baseTwd, isForeignOverride: true, foreignOverrideAmt: fpVal };
   } else {
-    const finalTwd = calcFinal(baseTwd, ch);
+    const finalTwd = calcFinal(baseTwd, ch, product);
     return { displayAmt: finalTwd * curr.rate, baseTwd, isForeignOverride: false };
   }
 }
@@ -2156,6 +2211,7 @@ function exportCatXlsx(){
   const curr=settings.currencies.find(c=>c.code===document.getElementById('exp-currency').value)||settings.currencies[0];
   const ci=document.getElementById('exp-channel').value;
   const ch=ci!==''?settings.channels[parseInt(ci)]:null;
+  const exportProducts=visibleProductsForChannel(ch);
   const title=document.getElementById('cat-title').value||L.title;
   const today=new Date().toLocaleDateString('en-CA');
   const feeDesc=(ch?(ch.fees||[]).map(f=>`${f.label||'Fee'}: ${f.type==='pct'?f.value+'%':'TWD '+(parseFloat(f.value)||0)}`).join(' | '):'N/A');
@@ -2163,12 +2219,12 @@ function exportCatXlsx(){
   const infoRows=[
     [L.catalogTitle, title], [L.channel, ch?ch.name:L.noChannel], [L.currency, `${curr.name} (${curr.code})`],
     [L.rate, curr.rate!==1?`1 TWD = ${curr.rate} ${curr.code}`:L.base], [L.fees, feeDesc], [L.date, today],
-    [L.totalProducts, products.length], [L.language, expLang==='zh'?'中文':expLang==='en'?'English':expLang==='ja'?'日本語':'한국어'], [L.brand, settings.brand||'—'],
+    [L.totalProducts, exportProducts.length], [L.language, expLang==='zh'?'中文':expLang==='en'?'English':expLang==='ja'?'日本語':'한국어'], [L.brand, settings.brand||'—'],
   ];
   const baseHeader=['#',L.productName,L.englishName,L.barcode,L.size,L.material,L.color,L.weight,L.basePrice,L.channelPrice,`${L.purchase}(${curr.code})`,L.priceType,L.notes];
   const fpHeaders=foreignCodes.map(code=>`${L.customPrice}(${code})`);
   const fullHeader=[...baseHeader,...fpHeaders];
-  const dataRows=products.map((p,idx)=>{
+  const dataRows=exportProducts.map((p,idx)=>{
     const pi=calcProductPrice(p,ch,curr);
     const chOv=(p.channelPrices||{})[ch?ch.name:'']||{};
     const hasChOv=chOv.enabled&&chOv.price>0;
@@ -2213,21 +2269,22 @@ function renderCatalog(){
   const isForeign=expLang!=='zh';
   const curr=settings.currencies.find(c=>c.code===document.getElementById('exp-currency').value)||settings.currencies[0];
   const ci=document.getElementById('exp-channel').value;
+  const ch=ci!==''?settings.channels[parseInt(ci)]:null;
+  const catalogProducts=visibleProductsForChannel(ch);
 
   // update preview info bar
   const infoEl=document.getElementById('exp-preview-info');
   const infoTxt=document.getElementById('exp-info-text');
-  if(infoEl&&infoTxt&&products.length){
+  if(infoEl&&infoTxt&&catalogProducts.length){
     const chName=ci!==''?settings.channels[parseInt(ci)].name:L.noChannel;
     const langName=expLang==='zh'?'中文':expLang==='en'?'English':expLang==='ja'?'日本語':'한국어';
-    infoTxt.textContent=`${products.length} ${L.items} · ${L.channel}: ${chName} · ${L.currency}: ${curr.code} · ${L.language}: ${langName}`;
+    infoTxt.textContent=`${catalogProducts.length} ${L.items} · ${L.channel}: ${chName} · ${L.currency}: ${curr.code} · ${L.language}: ${langName}`;
     infoEl.style.display='block';
   } else if(infoEl){ infoEl.style.display='none'; }
 
-  const ch=ci!==''?settings.channels[parseInt(ci)]:null;
   const title=document.getElementById('cat-title').value||L.title;
   const el=document.getElementById('catalog-preview');
-  if(!products.length){
+  if(!catalogProducts.length){
     el.innerHTML=`<div class="empty-state"><div class="icon">📄</div><p>${L.noProducts}</p></div>`;
     return;
   }
@@ -2245,7 +2302,7 @@ function renderCatalog(){
 
   // Sort products by category order
   const catOrder=Object.fromEntries(categories.map((c,i)=>[c,i]));
-  const sortedProds=[...products].sort((a,b)=>{
+  const sortedProds=[...catalogProducts].sort((a,b)=>{
     const ai=Math.min(...((a.cats||[]).map(c=>catOrder[c]??999)));
     const bi=Math.min(...((b.cats||[]).map(c=>catOrder[c]??999)));
     return ai===bi?products.indexOf(a)-products.indexOf(b):ai-bi;
@@ -2259,7 +2316,7 @@ function renderCatalog(){
         <span>${L.date}：${today}</span>
         <span>${L.currency}：${curr.name}（${curr.code}）</span>
         ${ch?`<span>${L.channel}：${x(ch.name)}</span>`:''}
-        <span>${L.totalProducts}: ${products.length} ${L.items}</span>
+        <span>${L.totalProducts}: ${catalogProducts.length} ${L.items}</span>
       </div>
     </div>
     <table class="cat-table">
@@ -2289,7 +2346,7 @@ function renderCatalog(){
           <div class="price-cell">${fmtProductPrice(p,curr,ch)}</div>
           
         </td>
-        ${curr.code!=='TWD'?`<td class="bc" style="color:var(--ok);font-weight:600;font-size:14px;">NT$ ${Math.round(calcFinal(getBaseTwd(p,ch),ch)).toLocaleString()}</td>`:''}
+        ${curr.code!=='TWD'?`<td class="bc" style="color:var(--ok);font-weight:600;font-size:14px;">NT$ ${Math.round(calcFinal(getBaseTwd(p,ch),ch,p)).toLocaleString()}</td>`:''}
         <td style="text-align:center;font-size:16px;">${(p.stock!=null||p.stockLow)?isLowStock(p)?'<span style=\"color:var(--err);\" title=\"庫存不足\">✗</span>':'<span style=\"color:var(--ok);\" title=\"庫存充足\">✓</span>':'<span style=\"color:var(--hint);\" title=\"未設定\">—</span>'}</td>
         <td style="text-align:center;color:var(--hint);">—</td>
       </tr>`).join('')}
@@ -2384,7 +2441,8 @@ function renderBuyerTable(){
 
   // Group products by first category
   const catGroups={};
-  products.forEach(p=>{
+  products.forEach(p=>{if(isProductHiddenForChannel(p,ch))delete orderQtys[p.id];});
+  visibleProductsForChannel(ch).forEach(p=>{
     const cat=(p.cats&&p.cats.length)?p.cats[0]:'';
     if(!catGroups[cat]) catGroups[cat]=[];
     catGroups[cat].push(p);
@@ -2410,7 +2468,7 @@ function renderBuyerTable(){
     const priceInfo=calcProductPrice(p,ch,curr);
     const unitFinal=priceInfo.displayAmt;
     const sub=unitFinal*qty;
-    const subTwd=calcFinal(getBaseTwd(p,ch),ch)*qty;
+    const subTwd=calcFinal(getBaseTwd(p,ch),ch,p)*qty;
     const displayName=pName(p);
     const subName=(isForeign&&p.nameEn&&p.name)?`<div style="font-size:11px;color:var(--hint);">${x(p.name)}</div>`:'';
     const chOverride=(p.channelPrices||{})[ch.name];
@@ -2423,8 +2481,10 @@ function renderBuyerTable(){
     const basePriceDisp=hasFp
       ?`<div class="price-cell" style="font-size:13px;">${fmtAmt(parseFloat(fpVal),curr)}</div><div style="font-size:10px;background:var(--ok-bg);color:var(--ok);display:inline-block;padding:1px 6px;border-radius:10px;margin-top:2px;">${isForeign?'Custom Price':'自訂外幣定價'}</div>`
       :`<div>${fmtAmt((parseFloat(priceInfo.baseTwd)||0)*curr.rate,curr)}</div>`;
-    const pctTotal=fees.filter(f=>f.type==='pct').reduce((s,f)=>s+(parseFloat(f.value)||0),0);
-    const calcHint=fees.length?`× (1−${pctTotal.toFixed(0)}%)`:'';
+    const pctTotal=effectiveChannelPercentage(p,ch),customPct=hasCustomChannelPercentage(p,ch);
+    const fixedFeeDesc=fees.filter(f=>f.type==='fixed').map(f=>`${x(f.label||'fee')}：NT$${(parseFloat(f.value)||0).toLocaleString()}${f.note?' ('+x(f.note)+')':''}`).join('<br>');
+    const rowFeeDesc=customPct?`<span style="display:inline-block;background:var(--warn-bg);color:var(--warn);padding:2px 7px;border-radius:10px;font-weight:600;">${isForeign?'Product rate':'商品專屬抽成'}：${pctTotal}%</span>${fixedFeeDesc?'<br>'+fixedFeeDesc:''}`:feeDesc;
+    const calcHint=(pctTotal||channelFixedFee(ch))?`× (1−${pctTotal.toFixed(1)}%)`:'';
     tbodyHtml+=`<tr id="row-${p.id}">
       <td>${p.img?`<img class="cat-thumb zoomable-img" src="${p.img}" data-zoom-src="${p.img}" style="width:160px;height:160px;object-fit:cover;" crossorigin="anonymous" referrerpolicy="no-referrer">`:'<div style="width:160px;height:160px;border-radius:var(--rs);background:var(--surface2);display:flex;align-items:center;justify-content:center;font-size:40px;border:1px solid var(--border);">📦</div>'}</td>
       <td>
@@ -2441,7 +2501,7 @@ function renderBuyerTable(){
         ${basePriceDisp}
         <div style="font-size:11px;color:var(--hint);">${baseTwdDisp}</div>
       </td>
-      <td style="font-size:11px;color:var(--muted);max-width:150px;line-height:1.8;">${feeDesc||'—'}</td>
+      <td style="font-size:11px;color:var(--muted);max-width:150px;line-height:1.8;">${rowFeeDesc||'—'}</td>
       <td><div class="price-cell">${fmtAmt(unitFinal,curr)}</div><div style="font-size:11px;color:var(--hint);">${calcHint}</div></td>
       <td>${outOfStock
         ?`<span class="qty-unavailable">${L.out_of_stock}</span>`
@@ -2463,7 +2523,7 @@ function updateRowSub(pid){
   const qty=orderQtys[pid]||0;
   const pi=calcProductPrice(p,ch,curr);
   const sub=pi.displayAmt*qty;
-  const subTwd=calcFinal(getBaseTwd(p,ch),ch)*qty;
+  const subTwd=calcFinal(getBaseTwd(p,ch),ch,p)*qty;
   const subEl=document.getElementById('sub-'+pid);
   const subTwdEl=document.getElementById('subtwd-'+pid);
   if(subEl){
@@ -2481,12 +2541,13 @@ function updateSum(){
   const curr=getBCurr(), ch=buyerChannel, L=I18N[buyerLang]||I18N.zh;
   let items=0,qty=0,totalCurr=0,totalTwd=0;
   products.forEach(p=>{
+    if(isProductHiddenForChannel(p,ch)){delete orderQtys[p.id];return;}
     const q=orderQtys[p.id]||0;
     if(q>0){
       items++; qty+=q;
       const pi=calcProductPrice(p,ch,curr);
       totalCurr+=pi.displayAmt*q;
-      totalTwd+=calcFinal(getBaseTwd(p,ch),ch)*q;
+      totalTwd+=calcFinal(getBaseTwd(p,ch),ch,p)*q;
     }
   });
   document.getElementById('sum-items').textContent=items;
@@ -2504,9 +2565,10 @@ function updateSum(){
 
   const fees=ch.fees||[];
   const feeEl=document.getElementById('sum-fee-breakdown');
-  if(fees.length&&totalCurr>0){
+  const hasCustom=products.some(p=>!isProductHiddenForChannel(p,ch)&&(orderQtys[p.id]||0)>0&&hasCustomChannelPercentage(p,ch));
+  if((fees.length||hasCustom)&&totalCurr>0){
     const parts=fees.map(f=>`<span style="background:var(--surface2);border-radius:20px;padding:2px 9px;margin-right:4px;white-space:nowrap;">${x(f.label||'fee')}：${f.type==='pct'?f.value+'%':'NT$'+(parseFloat(f.value)||0).toLocaleString()}${f.note?' ('+x(f.note)+')':''}</span>`).join('');
-    feeEl.innerHTML=`<span style="font-weight:500;color:var(--text);margin-right:8px;">${L.fees_label}</span>${parts}`;
+    feeEl.innerHTML=`<span style="font-weight:500;color:var(--text);margin-right:8px;">${L.fees_label}</span>${parts}${hasCustom?'<span style="background:var(--warn-bg);color:var(--warn);border-radius:20px;padding:2px 9px;white-space:nowrap;">部分商品使用專屬抽成</span>':''}`;
     feeEl.style.display='block';
   } else { feeEl.style.display='none'; }
 
@@ -2535,7 +2597,7 @@ function resetOrder(){
 }
 function orderPayload(){
   const curr=getBCurr(),ch=buyerChannel;
-  return products.filter(p=>(orderQtys[p.id]||0)>0).map(p=>({productId:p.id,qty:orderQtys[p.id],unitAmount:calcProductPrice(p,ch,curr).displayAmt,unitTwd:calcFinal(getBaseTwd(p,ch),ch)}));
+  return products.filter(p=>!isProductHiddenForChannel(p,ch)&&(orderQtys[p.id]||0)>0).map(p=>({productId:p.id,qty:orderQtys[p.id],unitAmount:calcProductPrice(p,ch,curr).displayAmt,unitTwd:calcFinal(getBaseTwd(p,ch),ch,p)}));
 }
 function orderFlowError(code,message=''){
   const error=new Error(message||code||'ORDER_FAILED');
@@ -2563,6 +2625,7 @@ function orderSaveErrorMessage(e){
   if(code.includes('PENDING_ORDER_EXISTS'))return t('pending_order_exists');
   if(code.includes('LOGIN_REQUIRED'))return ({zh:'登入已逾期，請重新輸入通路代碼。已填寫的商品數量會保留。',en:'Your session has expired. Please sign in again. Your order quantities will be kept.',ja:'ログインの有効期限が切れました。再度ログインしてください。入力した数量は保持されます。',ko:'로그인 세션이 만료되었습니다. 다시 로그인해 주세요. 입력한 수량은 유지됩니다.'}[buyerLang]||'登入已逾期，請重新登入。');
   if(code.includes('INSUFFICIENT_STOCK'))return t('out_of_stock_alert');
+  if(code.includes('PRODUCT_HIDDEN'))return ({zh:'部分商品目前不開放此通路採購，系統已更新商品清單，請重新確認。',en:'Some products are no longer available to this channel. The catalog has been refreshed.',ja:'一部の商品はこの販売チャネルでは購入できません。商品一覧を更新しました。',ko:'일부 상품은 이 채널에서 구매할 수 없습니다. 상품 목록을 새로고침했습니다.'}[buyerLang]||'部分商品目前不開放此通路採購。');
   return ({zh:'訂單送出失敗，請重新整理後再試；若仍失敗請聯絡供應商。',en:'The order could not be submitted. Please refresh and try again, or contact the supplier.',ja:'注文を送信できませんでした。再読み込みして再試行するか、仕入先に連絡してください。',ko:'주문을 전송할 수 없습니다. 새로고침 후 다시 시도하거나 공급업체에 문의해 주세요.'}[buyerLang]||code);
 }
 async function handleOrderSaveFailure(error){
@@ -2577,7 +2640,7 @@ async function handleOrderSaveFailure(error){
   document.getElementById('buyer-err').textContent=({zh:'登入已逾期，重新登入後可繼續剛才的訂單。',en:'Session expired. Sign in again to continue your order.',ja:'ログイン期限が切れました。再ログインすると注文を続けられます。',ko:'로그인이 만료되었습니다. 다시 로그인하면 주문을 계속할 수 있습니다.'}[buyerLang]||'請重新登入後繼續訂單。');
 }
 async function deductStock(){
-  const lines=products.filter(p=>(orderQtys[p.id]||0)>0);
+  const lines=products.filter(p=>!isProductHiddenForChannel(p,buyerChannel)&&(orderQtys[p.id]||0)>0);
   if(!lines.length) return; // nothing to deduct
   lines.forEach(p=>{
     const q=orderQtys[p.id]||0;
@@ -2606,11 +2669,10 @@ function openOrderConfirm(){
   }
   const isEn=buyerLang==='en';
   const isForeign=curr.code!=='TWD';
-  const lines=products.filter(p=>(orderQtys[p.id]||0)>0);
+  const lines=products.filter(p=>!isProductHiddenForChannel(p,ch)&&(orderQtys[p.id]||0)>0);
   if(!lines.length){alert(L.confirm_no_qty);return;}
   const fees=ch.fees||[];
   const feeDesc=fees.map(f=>`${x(f.label||'fee')}：${f.type==='pct'?f.value+'%':'NT$'+(parseFloat(f.value)||0).toLocaleString()}`).join('　');
-  const pctTotal=fees.filter(f=>f.type==='pct').reduce((s,f)=>s+(parseFloat(f.value)||0),0);
   let grand=0,grandTwd=0;
 
   const thS='padding:6px 5px;text-align:left;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.3px;background:var(--surface2);border-bottom:1px solid var(--border);white-space:normal;vertical-align:bottom;line-height:1.4;word-break:break-word;';
@@ -2621,8 +2683,11 @@ function openOrderConfirm(){
     const pi=calcProductPrice(p,ch,curr);
     const unit=pi.displayAmt, sub=unit*q;
     const baseTwd=getBaseTwd(p,ch);
-    const unitTwd=calcFinal(baseTwd,ch);
+    const unitTwd=calcFinal(baseTwd,ch,p);
     const subTwd=unitTwd*q;
+    const pctTotal=effectiveChannelPercentage(p,ch);
+    const rowFees=effectiveProductFees(p,ch);
+    const customPct=hasCustomChannelPercentage(p,ch);
     grand+=sub; grandTwd+=subTwd;
     const name=pName(p);
     const imgCell=p.img
@@ -2644,7 +2709,7 @@ function openOrderConfirm(){
         ${isForeign?`<div style="font-size:10px;color:var(--hint);">NT$ ${Math.round(baseTwd).toLocaleString()}</div>`:''}
       </td>
       <td style="${tdS}font-size:11px;color:var(--muted);">
-        ${fees.map(f=>`${x(f.label||'fee')}: ${f.type==='pct'?f.value+'%':'NT$'+(parseFloat(f.value)||0)}`).join('<br>')||'—'}
+        ${rowFees.map(f=>`${x(customPct&&f.type==='pct'?(isEn?'Product-specific commission':'商品專屬抽成'):(f.label||'fee'))}: ${f.type==='pct'?f.value+'%':'NT$'+(parseFloat(f.value)||0)}`).join('<br>')||'—'}
         ${pctTotal?`<div style="font-size:10px;font-weight:600;color:var(--muted);">×(1−${pctTotal}%)</div>`:''}
       </td>
       <td style="${tdS}">
@@ -2721,7 +2786,7 @@ async function exportOrderXlsx(){
   const curr=getBCurr(),ch=buyerChannel,L=I18N[buyerLang]||I18N.zh;
   const isEn=buyerLang==='en';
   const isForeign=curr.code!=='TWD';
-  const lines=products.filter(p=>(orderQtys[p.id]||0)>0);
+  const lines=products.filter(p=>!isProductHiddenForChannel(p,ch)&&(orderQtys[p.id]||0)>0);
   const fees=ch.fees||[];
   const feeDesc=fees.map(f=>`${f.label||'fee'}: ${f.type==='pct'?f.value+'%':'NT$'+(parseFloat(f.value)||0)}`).join(' | ');
   const today=new Date().toLocaleDateString('en-CA');
@@ -2759,10 +2824,10 @@ async function exportOrderXlsx(){
     const unit=+pi.displayAmt.toFixed(4);
     const sub=+(unit*q).toFixed(2);
     const baseTwd=getBaseTwd(p,ch);
-    const unitTwd=+calcFinal(baseTwd,ch).toFixed(4);
+    const unitTwd=+calcFinal(baseTwd,ch,p).toFixed(4);
     const subTwd=+(unitTwd*q).toFixed(2);
     grand+=sub; grandTwd+=subTwd;
-    const feeStr=fees.map(f=>`${f.label}: ${f.type==='pct'?f.value+'%':'NT$'+(parseFloat(f.value)||0)}`).join(' | ');
+    const feeStr=productFeeDescription(p,ch,isEn,' | ');
     const stockStatus=isLowStock(p)?(isEn?'Low Stock':'庫存不足'):(p.stock!=null?(isEn?'In Stock':'庫存充足'):'—');
     const row=[
       p.nameEn||p.name,
@@ -2812,14 +2877,14 @@ function buildOrderHtml(curr, ch, lines, grand, grandTwd){
     const pi=calcProductPrice(p,ch,curr);
     const unit=pi.displayAmt;
     const sub=unit*q;
-    const subTwd=calcFinal(getBaseTwd(p,ch),ch)*q;
+    const subTwd=calcFinal(getBaseTwd(p,ch),ch,p)*q;
     const name=(isEn&&p.nameEn)?p.nameEn:p.name;
     return `<tr>
       <td>${x(name)}${isEn&&p.name?`<br><span style="font-size:10px;color:#a09d96;">${x(p.name)}</span>`:''}</td>
       <td>${x(p.barcode||'—')}</td>
       <td>${x(p.size||'—')}</td>
       <td>${x(p.material||'—')}</td>
-      <td class="price">${fmtAmt(unit,curr)}${curr.code!=='TWD'?`<br><span class="twd">NT$ ${Math.round(calcFinal(getBaseTwd(p,ch),ch)).toLocaleString()}</span>`:''}</td>
+      <td class="price">${fmtAmt(unit,curr)}${curr.code!=='TWD'?`<br><span class="twd">NT$ ${Math.round(calcFinal(getBaseTwd(p,ch),ch,p)).toLocaleString()}</span>`:''}</td>
       <td style="text-align:center;">${q}</td>
       <td class="price">${fmtAmt(sub,curr)}${curr.code!=='TWD'?`<br><span class="twd">NT$ ${Math.round(subTwd).toLocaleString()}</span>`:''}</td>
     </tr>`;
@@ -2858,7 +2923,7 @@ function buildPdfOrderHtml(){
   const isForeign=curr.code!=='TWD';
   const today=new Date().toLocaleDateString(isEn?'en-CA':'zh-TW');
   const fees=(ch.fees||[]).map(f=>`${f.label||'fee'}: ${f.type==='pct'?f.value+'%':'NT$'+(parseFloat(f.value)||0)}`).join(' | ');
-  const lines=products.filter(p=>(orderQtys[p.id]||0)>0);
+  const lines=products.filter(p=>!isProductHiddenForChannel(p,ch)&&(orderQtys[p.id]||0)>0);
   let grand=0, grandTwd=0;
 
   const rows=lines.map(p=>{
@@ -2866,9 +2931,9 @@ function buildPdfOrderHtml(){
     const pi=calcProductPrice(p,ch,curr);
     const unit=pi.displayAmt, sub=unit*q;
     const baseTwd=getBaseTwd(p,ch);
-    const unitTwd=calcFinal(baseTwd,ch);
+    const unitTwd=calcFinal(baseTwd,ch,p);
     const subTwd=unitTwd*q;
-    const pctTotal=(ch.fees||[]).filter(f=>f.type==='pct').reduce((s,f)=>s+(parseFloat(f.value)||0),0);
+    const pctTotal=effectiveChannelPercentage(p,ch);
     grand+=sub; grandTwd+=subTwd;
     const name=(isEn&&p.nameEn)?p.nameEn:p.name;
     const imgCell=p.img
@@ -2888,7 +2953,7 @@ function buildPdfOrderHtml(){
         ${isForeign?`<div style="font-size:9px;color:#706e68;">NT$ ${Math.round(baseTwd).toLocaleString()}</div>`:''}
       </td>
       <td style="padding:5px 4px;font-size:9px;color:#706e68;">
-        ${(ch.fees||[]).map(f=>`${f.label}: ${f.type==='pct'?f.value+'%':'NT$'+(parseFloat(f.value)||0)}`).join('<br>')||'—'}
+        ${effectiveProductFees(p,ch).map(f=>`${hasCustomChannelPercentage(p,ch)&&f.type==='pct'?(isEn?'Product-specific commission':'商品專屬抽成'):(f.label||'fee')}: ${f.type==='pct'?f.value+'%':'NT$'+(parseFloat(f.value)||0)}`).join('<br>')||'—'}
         ${pctTotal?`<div style="font-size:9px;font-weight:600;">×(1−${pctTotal}%)</div>`:''}
       </td>
       <td style="padding:5px 4px;">
@@ -3207,7 +3272,7 @@ async function exportOrderPdf(){
     return;
   }
   try{await ensureOrderSaved();}catch(e){await handleOrderSaveFailure(e);return;}
-  const lines=products.filter(p=>(orderQtys[p.id]||0)>0);
+  const lines=products.filter(p=>!isProductHiddenForChannel(p,buyerChannel)&&(orderQtys[p.id]||0)>0);
   if(!lines.length){alert(t('confirm_no_qty'));return;}
   const ch=buyerChannel, curr=getBCurr();
   const today=new Date().toLocaleDateString('en-CA');
@@ -3454,7 +3519,7 @@ function renderAdminOrderCreateItems(){
 function renderAdminOrderCreateSummary(){
   const {channel,currency}=adminOrderCreateContext();
   let qty=0,total=0,totalTwd=0;
-  adminNewOrderItems.forEach(item=>{const p=products.find(v=>String(v.id)===String(item.productId));if(!p||!channel||!currency)return;const n=Number(item.qty||0),price=calcProductPrice(p,channel,currency);qty+=n;total+=Number(price.displayAmt||0)*n;totalTwd+=Number(calcFinal(getBaseTwd(p,channel),channel)||0)*n;});
+  adminNewOrderItems.forEach(item=>{const p=products.find(v=>String(v.id)===String(item.productId));if(!p||!channel||!currency)return;const n=Number(item.qty||0),price=calcProductPrice(p,channel,currency);qty+=n;total+=Number(price.displayAmt||0)*n;totalTwd+=Number(calcFinal(getBaseTwd(p,channel),channel,p)||0)*n;});
   document.getElementById('admin-order-create-summary').innerHTML=`<span>商品種類：<strong>${adminNewOrderItems.length}</strong></span><span>總件數：<strong>${qty}</strong></span><span>訂單金額：<strong>${x(currency?.code||'—')} ${total.toLocaleString(undefined,{maximumFractionDigits:2})}</strong>${currency?.code&&currency.code!=='TWD'?` <small>（NT$ ${Math.round(totalTwd).toLocaleString()}）</small>`:''}</span>`;
 }
 async function saveAdminCreatedOrder(btn){
@@ -3467,7 +3532,7 @@ async function saveAdminCreatedOrder(btn){
     if(!p||!Number.isInteger(qty)||qty<1){alert('商品數量必須是正整數');return;}
     if(p.stock!=null&&qty>Number(p.stock)){alert(`${p.name||p.nameEn} 的數量超過目前庫存`);return;}
     const price=calcProductPrice(p,channel,currency);
-    items.push({productId:String(p.id),qty,unitAmount:Number(price.displayAmt.toFixed(4)),unitTwd:Number(calcFinal(getBaseTwd(p,channel),channel).toFixed(4))});
+    items.push({productId:String(p.id),qty,unitAmount:Number(price.displayAmt.toFixed(4)),unitTwd:Number(calcFinal(getBaseTwd(p,channel),channel,p).toFixed(4))});
   }
   if(!confirm(`確認為「${channel.name||channel.code}」建立待出貨訂單，並立即扣除庫存？`))return;
   const oldText=btn.textContent;btn.disabled=true;btn.textContent='建立中…';
@@ -3516,7 +3581,8 @@ function buildAdminOrderPdfHtml(o){
   const rows=(o.items||[]).map(i=>{
     const p=productMap[String(i.productId)]||{},img=i.img||p.img||'',primary=lang==='zh'?(i.name||p.name||i.nameEn||p.nameEn):(i.nameEn||p.nameEn||i.name||p.name),secondary=lang==='zh'?'':(i.name||p.name);
     const pricing=p.id&&channel&&currency?calcProductPrice(p,channel,currency):null;
-    const pctTotal=(channel?.fees||[]).filter(f=>f.type==='pct').reduce((sum,f)=>sum+(parseFloat(f.value)||0),0);
+    const defaultPct=(channel?.fees||[]).filter(f=>f.type==='pct').reduce((sum,f)=>sum+(parseFloat(f.value)||0),0);
+    const pctTotal=Number.isFinite(Number(i.commissionRate))?Number(i.commissionRate):defaultPct;
     const fixedTwd=(channel?.fees||[]).filter(f=>f.type==='fixed').reduce((sum,f)=>sum+(parseFloat(f.value)||0),0);
     const rate=Number(currency.rate||0),denominator=1-pctTotal/100;
     const fallbackList=denominator>0?(Number(i.unitAmount||0)-fixedTwd*rate)/denominator:Number(i.unitAmount||0);
@@ -3585,7 +3651,7 @@ function addProductToOrderEdit(){
   const ch=(settings.channels||[]).find(c=>String(c.code||'').toUpperCase()===String(o.channel_code||'').toUpperCase())||null;
   const curr=(settings.currencies||[]).find(c=>String(c.code||'').toUpperCase()===String(o.currency_code||'').toUpperCase())||{code:o.currency_code||'TWD',rate:o.currency_code==='TWD'?1:0};
   if(!curr.rate&&curr.code!=='TWD'){alert('找不到此訂單幣別的匯率設定，請先至設定頁確認');return;}
-  const calculated=calcProductPrice(p,ch,curr),unitAmount=Number(calculated.displayAmt.toFixed(4)),unitTwd=Number(calcFinal(getBaseTwd(p,ch),ch).toFixed(4));
+  const calculated=calcProductPrice(p,ch,curr),unitAmount=Number(calculated.displayAmt.toFixed(4)),unitTwd=Number(calcFinal(getBaseTwd(p,ch),ch,p).toFixed(4));
   editingOrderItems.push({productId:String(p.id),name:p.name||'',nameEn:p.nameEn||'',barcode:p.barcode||'',img:p.img||'',qty:1,_originalQty:0,unitAmount,unitTwd,subtotal:unitAmount,subtotalTwd:unitTwd});
   renderOrderEditItems();
 }
