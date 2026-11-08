@@ -26,6 +26,8 @@ create policy "public access" on public.sl_categories
 grant select, insert, update, delete on public.sl_products to anon, authenticated;
 grant select, insert, update, delete on public.sl_categories to anon, authenticated;
 
+drop policy if exists "Allow anon upload product images" on storage.objects;
+drop policy if exists "Allow anon update product images" on storage.objects;
 create policy "Allow anon upload product images"
   on storage.objects for insert to anon
   with check (bucket_id = 'product-images');
