@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 <title>SEVERUS LIAN Order System</title>
-<meta name="build-version" content="20261107-low-stock-filter">
+<meta name="build-version" content="20261108-secure-pos-sync">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -355,6 +355,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       <div class="topbar"><div class="topbar-title">商品清單</div>
         <div class="topbar-actions">
           <button class="btn" onclick="pushToCloud()" title="儲存所有資料到雲端">☁️ 上傳雲端</button>
+          <button class="btn" onclick="downloadPosCatalog()" title="僅輸出 POS 核准商品欄位">⬇ POS 商品目錄</button>
+          <button class="btn" onclick="openPosDeviceModal()" title="產生配對碼與撤銷 POS 裝置">🔐 POS 裝置</button>
           <button class="btn" onclick="downloadBatchTemplate()">⬇ 模板下載</button>
           <button class="btn" onclick="document.getElementById('batch-modal').classList.remove('hidden')">📦 批次上傳</button>
           <button class="btn btn-primary" onclick="openPModal()">＋ 新增商品</button>
@@ -799,6 +801,25 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 <div id="img-zoom-preview"><img alt="商品圖片放大預覽"></div>
 <div id="img-lightbox" onclick="closeImageLightbox(event)"><div class="lightbox-card"><button class="lightbox-close" onclick="closeImageLightbox(event)">×</button><img id="img-lightbox-img" alt="商品圖片滿版放大"></div></div>
 
+<div class="modal-overlay hidden" id="pos-device-modal">
+  <div class="modal" style="max-width:720px;">
+    <div class="modal-header">
+      <div class="modal-title">🔐 離線 POS 裝置管理</div>
+      <button class="modal-close" onclick="closePosDeviceModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="order-edit-note">配對碼僅顯示一次並於 10 分鐘後失效。POS 取得的唯讀憑證會由 PWA 儲存在 IndexedDB；若清除網站資料，需要重新配對。</div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:16px 0;">
+        <button class="btn btn-primary" id="pos-create-pairing" onclick="createPosPairingCode(this)">產生一次性配對碼</button>
+        <div id="pos-pairing-result" style="display:none;padding:10px 14px;border:1px solid var(--accent);border-radius:var(--rs);background:var(--accent-l);"></div>
+      </div>
+      <div class="settings-title" style="margin-top:18px;">已配對裝置</div>
+      <div id="pos-device-list"><div class="empty-state"><p>載入中…</p></div></div>
+    </div>
+    <div class="modal-footer"><button class="btn" onclick="closePosDeviceModal()">關閉</button></div>
+  </div>
+</div>
+
 <script>
 // ── SUPABASE CONFIG ──
 const SB_URL = 'https://njurnphljfwamntqsldw.supabase.co';
@@ -822,42 +843,16 @@ function getFileExt(fileOrName){
   return ['jpg','jpeg','png','gif','webp'].includes(ext) ? ext : 'jpg';
 }
 async function uploadProductImageToStorage(fileOrBlob, productId, originalName='image.jpg'){
-  if(!sbClient) throw new Error('Supabase Storage SDK 未載入，請確認網路或重新整理頁面');
-  const ext = getFileExt(originalName || fileOrBlob.name);
-  const base = safeStorageName(productId || Date.now());
-  const filename = safeStorageName(originalName || `image.${ext}`);
-  const path = `products/${base}/${Date.now()}-${filename}`;
-  const contentType = fileOrBlob.type || (ext==='png'?'image/png':ext==='webp'?'image/webp':ext==='gif'?'image/gif':'image/jpeg');
-  const { error } = await sbClient.storage.from(STORAGE_BUCKET).upload(path, fileOrBlob, {
-    cacheControl: '3600',
-    upsert: true,
-    contentType
-  });
-  if(error) throw new Error(error.message || '圖片上傳 Storage 失敗');
-  const { data } = sbClient.storage.from(STORAGE_BUCKET).getPublicUrl(path);
-  return data.publicUrl;
-}
-
-async function sbFetch(method, table, body=null, query=''){
-  const url = `${SB_URL}/rest/v1/${table}${query}`;
-  const headers = {
-    'apikey': SB_KEY,
-    'Authorization': `Bearer ${SB_KEY}`,
-    'Content-Type': 'application/json',
-  };
-  // For upsert (POST), tell Supabase to merge on conflict
-  if(method==='POST') headers['Prefer'] = 'resolution=merge-duplicates,return=minimal';
-  if(method==='DELETE') headers['Prefer'] = 'return=minimal';
-  const opts = { method, headers };
-  if(body) opts.body = JSON.stringify(body);
-  try {
-    const r = await fetch(url, opts);
-    if(!r.ok){ const t=await r.text(); console.error('SB error',r.status,t,url); return null; }
-    if(r.status===204||r.status===201||r.status===200&&method!=='GET') return true;
-    const txt=await r.text();
-    if(!txt||txt.trim()==='') return true;
-    try{ return JSON.parse(txt); }catch(e){ return true; }
-  } catch(e){ console.error('SB fetch error:',e); return null; }
+  if(!supplierAccessToken)throw new Error('管理者登入已失效，請重新登入');
+  const form=new FormData();
+  form.append('action','upload-image');
+  form.append('accessToken',supplierAccessToken);
+  form.append('productId',String(productId||Date.now()));
+  form.append('file',fileOrBlob,originalName||fileOrBlob.name||'image.jpg');
+  const response=await fetch(`${SB_URL}/functions/v1/admin-catalog`,{method:'POST',body:form});
+  const result=await response.json().catch(()=>({error:'UPLOAD_FAILED'}));
+  if(!response.ok||result.error||!result.publicUrl)throw new Error(result.error||'圖片上傳失敗');
+  return result.publicUrl;
 }
 
 // ── AUTO PING (keep Supabase alive every 5 days) ──
@@ -917,9 +912,9 @@ function setupAutoBackup(){
   function doBackup(){
     try {
       const backup = {
-        version: 5,
+        version: 7,
         date: new Date().toISOString(),
-        products, settings, categories
+        products, settings, categories, categoryIdentity
       };
       const blob = new Blob([JSON.stringify(backup, null, 2)], {type:'application/json'});
       const a = document.createElement('a');
@@ -953,11 +948,12 @@ async function runSupabaseHealthCheck(silent=false){
   if(!silent)showToast('🩺 正在檢查雲端資料與商品圖片…');
   const checkedAt=Date.now(),issues=[];
   try{
-    const [cloudProducts,cloudCategories,orderResult]=await Promise.all([
-      sbFetch('GET','sl_products','','?select=id,name,barcode,cats,img&order=sort_order.asc&limit=1000'),
-      sbFetch('GET','sl_categories','','?select=name&order=sort_order.asc&limit=500'),
+    const [catalogResult,orderResult]=await Promise.all([
+      sbClient.functions.invoke('catalog-read',{body:{accessToken:supplierAccessToken}}),
       sbClient.functions.invoke('admin-orders',{body:{action:'list',accessToken:supplierAccessToken}})
     ]);
+    if(catalogResult.error||catalogResult.data?.error)throw new Error('商品資料無法讀取');
+    const cloudProducts=catalogResult.data?.products||[],cloudCategories=catalogResult.data?.categories||[];
     if(!Array.isArray(cloudProducts))throw new Error('商品資料無法讀取');
     if(!Array.isArray(cloudCategories))throw new Error('分類資料無法讀取');
     if(orderResult.error||orderResult.data?.error)throw new Error('訂單資料無法讀取');
@@ -1054,9 +1050,9 @@ function setupMonthlyFullBackup(){
 // ── MANUAL BACKUP & RESTORE ──
 function downloadBackup(){
   const backup = {
-    version: 5,
+    version: 7,
     date: new Date().toISOString(),
-    products, settings, categories
+    products, settings, categories, categoryIdentity
   };
   const blob = new Blob([JSON.stringify(backup, null, 2)], {type:'application/json'});
   const a = document.createElement('a');
@@ -1076,6 +1072,9 @@ async function restoreBackup(file){
     products = data.products;
     if(data.settings) settings = data.settings;
     if(data.categories) categories = data.categories;
+    categoryIdentity=data.categoryIdentity||{};
+    categories.forEach(ensureCategoryId);
+    products.forEach(syncProductCategoryIds);
     products=sortProductsByNameFamily(products);
     await persist();
     renderProducts();
@@ -1111,87 +1110,72 @@ let currentCats=[];   // tags being edited in modal
 let activeCatFilter=''; // '' = all
 let activeStockFilter=''; // '' = all, 'low' = low stock, 'out' = out of stock
 let dragSrcId=null;
+let categoryIdentity={}; // category name -> immutable UUID
+
+function newPermanentCategoryId(){
+  if(globalThis.crypto?.randomUUID)return globalThis.crypto.randomUUID();
+  const bytes=crypto.getRandomValues(new Uint8Array(16));
+  bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;
+  const hex=[...bytes].map(value=>value.toString(16).padStart(2,'0')).join('');
+  return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+}
+function ensureCategoryId(name){
+  const key=String(name||'').trim();
+  if(!key)throw new Error('商品分類不可為空');
+  if(!categoryIdentity[key])categoryIdentity[key]=newPermanentCategoryId();
+  return categoryIdentity[key];
+}
+function syncProductCategoryIds(product){
+  product.categoryIds=(product.cats||[]).map(ensureCategoryId);
+  return product.categoryIds;
+}
 
 // ── SUPABASE SYNC ──
 let persistQueue=Promise.resolve();
 function persist(){
-  // Category creation and product saving can happen only seconds apart. Run cloud
-  // writes in order so two DELETE/INSERT category syncs cannot collide.
   localStorage.setItem('cp_products', JSON.stringify(products));
   localStorage.setItem('cp_settings', JSON.stringify(settings));
   localStorage.setItem('cp_categories', JSON.stringify(categories));
+  localStorage.setItem('cp_category_identity',JSON.stringify(categoryIdentity));
   const run=persistQueue.then(()=>persistNow());
   persistQueue=run.catch(()=>false);
   return run;
 }
 async function persistNow(){
-  // Save to localStorage first
   localStorage.setItem('cp_products', JSON.stringify(products));
   localStorage.setItem('cp_settings', JSON.stringify(settings));
   localStorage.setItem('cp_categories', JSON.stringify(categories));
+  localStorage.setItem('cp_category_identity',JSON.stringify(categoryIdentity));
 
-  // Sync to Supabase
-  let ok = true;
+  if(!supplierAccessToken){showToast('❌ 管理者登入已失效，請重新登入',true);return false;}
+  let ok=true;
   try {
-    console.log('[SB] Starting sync...', products.length, 'products');
+    categories.forEach(ensureCategoryId);
+    const categoryRows=categories.map((name,index)=>({id:ensureCategoryId(name),name,sort_order:index}));
+    const productRows=products.map((p,index)=>({
+      id:String(p.id),name:p.name||'',name_en:p.nameEn||null,barcode:p.barcode||'',
+      price:parseFloat(p.price)||0,size:p.size||null,material:p.material||null,color:p.color||null,
+      weight:p.weight?parseFloat(p.weight):null,note:p.note||null,img:p.img||null,
+      foreign_prices:p.foreignPrices||{},channel_prices:p.channelPrices||{},
+      category_ids:syncProductCategoryIds(p),stock:p.stock!=null?parseInt(p.stock):null,
+      stock_low:p.stockLow||false,sort_order:index
+    }));
+    const {data:catalogData,error:catalogError}=await sbClient.functions.invoke('admin-catalog',{body:{
+      action:'sync',accessToken:supplierAccessToken,categories:categoryRows,products:productRows
+    }});
+    if(catalogError||catalogData?.error)throw new Error(catalogData?.error||'商品目錄同步失敗');
 
-    // Save products one by one to avoid payload size issues
-    if(products.length){
-      const rows = products.map((p,i)=>({
-        id: String(p.id),
-        name: p.name||'',
-        name_en: p.nameEn||null,
-        barcode: p.barcode||null,
-        price: parseFloat(p.price)||0,
-        size: p.size||null,
-        material: p.material||null,
-        color: p.color||null,
-        weight: p.weight?parseFloat(p.weight):null,
-        note: p.note||null,
-        img: p.img||null,
-        foreign_prices: p.foreignPrices||{},
-        channel_prices: p.channelPrices||{},
-        cats: p.cats||[],
-        stock: p.stock!=null?parseInt(p.stock):null,
-        stock_low: p.stockLow||false,
-        sort_order: i,
-        updated_at: new Date().toISOString(),
-      }));
-      // Send in batches of 20 to avoid size limits
-      for(let i=0;i<rows.length;i+=20){
-        const batch=rows.slice(i,i+20);
-        const r=await sbFetch('POST','sl_products',batch,'');
-        if(r===null){ ok=false; console.error('[SB] Products batch failed at',i); }
-      }
-      console.log('[SB] Products saved:', ok);
-    }
-
-    // Save private settings only through the authenticated admin function.
-    if(supplierAccessToken){
-      const {data:sr,error:se}=await sbClient.functions.invoke('admin-settings',{body:{
-        accessToken:supplierAccessToken,
-        settings:{adminEmail:settings.adminEmail||'',supplierCode:settings.supplierCode||'',brand:settings.brand||'',stockThreshold:settings.stockThreshold||10,currencies:settings.currencies,channels:settings.channels}
-      }});
-      if(se||sr?.error){ok=false;console.error('[SB] Settings save failed');}
-      else console.log('[SB] Settings saved');
-    }
-
-    // Save categories
-    if(categories.length){
-      await sbFetch('DELETE','sl_categories','','?sort_order=gte.0');
-      const catRows=categories.map((name,i)=>({name,sort_order:i}));
-      const cr=await sbFetch('POST','sl_categories',catRows,'');
-      if(cr===null){ ok=false; console.error('[SB] Categories save failed'); }
-      else console.log('[SB] Categories saved');
-    }
-
-    console.log('[SB] Sync complete, ok=',ok);
-    if(!ok) showToast('⚠️ 部分資料未能同步雲端', true);
-
+    const {data:sr,error:se}=await sbClient.functions.invoke('admin-settings',{body:{
+      accessToken:supplierAccessToken,
+      settings:{adminEmail:settings.adminEmail||'',supplierCode:settings.supplierCode||'',brand:settings.brand||'',stockThreshold:settings.stockThreshold||10,currencies:settings.currencies,channels:settings.channels}
+    }});
+    if(se||sr?.error)throw new Error('設定同步失敗');
+    localStorage.setItem('cp_products',JSON.stringify(products));
+    localStorage.setItem('cp_category_identity',JSON.stringify(categoryIdentity));
   } catch(e){
     ok=false;
     console.error('[SB] Sync error:', e);
-    showToast('❌ 雲端同步失敗，已儲存本機', true);
+    showToast(`❌ 雲端同步失敗：${e.message||'請稍後再試'}`, true);
   }
   return ok;
 }
@@ -1199,30 +1183,26 @@ async function persistNow(){
 async function loadFromSupabase(accessToken=''){
   showLoading(true);
   try {
-    // Load products
-    const prods = await sbFetch('GET','sl_products','','?order=sort_order.asc&limit=1000');
-    if(prods && prods.length>=0){
-      products = prods.map(p=>({
-        id: p.id,
-        name: p.name,
-        nameEn: p.name_en||'',
-        barcode: p.barcode||'',
-        price: p.price||0,
-        size: p.size||'',
-        material: p.material||'',
-        color: p.color||'',
-        weight: p.weight||'',
-        note: p.note||'',
-        img: p.img||null,
-        foreignPrices: p.foreign_prices||{},
-        channelPrices: p.channel_prices||{},
-        cats: p.cats||[],
-        stock: p.stock,
-        stockLow: p.stock_low||false,
-      }));
-      localStorage.setItem('cp_products', JSON.stringify(products));
-    }
-    // Load settings
+    if(!accessToken)throw new Error('LOGIN_REQUIRED');
+    const {data:catalogData,error:catalogError}=await sbClient.functions.invoke('catalog-read',{body:{accessToken}});
+    if(catalogError||catalogData?.error||!Array.isArray(catalogData?.products)||!Array.isArray(catalogData?.categories))throw new Error(catalogData?.error||'商品資料讀取失敗');
+    categoryIdentity={};
+    categories=catalogData.categories.map(row=>{
+      const name=String(row.name||'').trim();
+      if(name&&row.public_id)categoryIdentity[name]=String(row.public_id);
+      return name;
+    }).filter(Boolean);
+    products=catalogData.products.map(p=>({
+      id:p.id,name:p.name,nameEn:p.name_en||'',barcode:p.barcode||'',price:p.price||0,
+      size:p.size||'',material:p.material||'',color:p.color||'',weight:p.weight||'',note:p.note||'',
+      img:p.img||null,foreignPrices:p.foreign_prices||{},channelPrices:p.channel_prices||{},
+      cats:p.cats||[],categoryIds:(p.category_ids||[]).map(String),stock:p.stock,stockLow:p.stock_low||false
+    }));
+    products.forEach(product=>{if(!product.categoryIds.length)syncProductCategoryIds(product);});
+    localStorage.setItem('cp_products',JSON.stringify(products));
+    localStorage.setItem('cp_categories',JSON.stringify(categories));
+    localStorage.setItem('cp_category_identity',JSON.stringify(categoryIdentity));
+
     const {data:settingsData,error:settingsError}=await sbClient.functions.invoke('settings-config',{body:{accessToken}});
     const s=settingsData?.settings;
     if(!settingsError && s){
@@ -1237,26 +1217,12 @@ async function loadFromSupabase(accessToken=''){
       };
       localStorage.setItem('cp_settings', JSON.stringify(settings));
     }
-    // Load categories
-    const cats = await sbFetch('GET','sl_categories','','?order=sort_order.asc&limit=200');
-    if(cats && cats.length>=0){
-      const savedCategories=cats.map(c=>c.name);
-      const productCategories=[];
-      products.forEach(product=>(product.cats||[]).forEach(category=>{
-        const name=String(category||'').trim();
-        if(name&&!productCategories.includes(name))productCategories.push(name);
-      }));
-      // Recover a category automatically if an older interrupted sync saved the
-      // product first but did not finish saving its newly-created category.
-      categories=[...savedCategories,...productCategories.filter(name=>!savedCategories.includes(name))];
-      localStorage.setItem('cp_categories', JSON.stringify(categories));
-    }
   } catch(e){
     console.warn('Supabase load failed, using local cache:', e);
-    // Fallback to localStorage
     products = JSON.parse(localStorage.getItem('cp_products')||'[]');
     settings = JSON.parse(localStorage.getItem('cp_settings')||'null') || settings;
     categories = JSON.parse(localStorage.getItem('cp_categories')||'null') || categories;
+    categoryIdentity=JSON.parse(localStorage.getItem('cp_category_identity')||'{}');
   }
   products=sortProductsByNameFamily(products);
   localStorage.setItem('cp_products', JSON.stringify(products));
@@ -1711,7 +1677,7 @@ function toggleCat(cat, checked){
 }
 
 // ── Category Management Page ──
-function renameCategory(idx, newName){
+async function renameCategory(idx, newName){
   if(!newName) return;
   const oldName = categories[idx];
   if(oldName === newName) return;
@@ -1720,15 +1686,23 @@ function renameCategory(idx, newName){
     renderCategoryManagePage(); // reset input
     return;
   }
-  // Update category list
+  const permanentId=ensureCategoryId(oldName);
+  // Update category list without changing its permanent ID
   categories[idx] = newName;
+  delete categoryIdentity[oldName];
+  categoryIdentity[newName]=permanentId;
   // Update all products that have this category
   products.forEach(p=>{
     if(p.cats && p.cats.includes(oldName)){
       p.cats = p.cats.map(c => c===oldName ? newName : c);
     }
   });
-  persist();
+  const synced=await persist();
+  if(!synced){
+    categories[idx]=oldName;delete categoryIdentity[newName];categoryIdentity[oldName]=permanentId;
+    products.forEach(p=>{if(p.cats)p.cats=p.cats.map(c=>c===newName?oldName:c);});
+    renderCategoryManagePage();renderProducts();return;
+  }
   renderCategoryManagePage();
   renderProducts();
   showToast(`✅ 分類已從「${oldName}」改為「${newName}」`);
@@ -1775,21 +1749,24 @@ function addNewCategory(){
   if(!val){alert('請輸入分類名稱');return;}
   if(categories.includes(val)){alert('此分類已存在');return;}
   categories.push(val);
+  ensureCategoryId(val);
   inp.value='';
   persist();
   renderCategoryManagePage();
   renderProducts(); // refresh filter chips
 }
-function deleteCategory(idx){
+async function deleteCategory(idx){
   const cat=categories[idx];
   const count=products.filter(p=>(p.cats||[]).includes(cat)).length;
-  if(count>0&&!confirm(`「${cat}」底下有 ${count} 件商品，刪除分類後商品不會消失只是移除此分類標籤。確定刪除？`)) return;
-  // remove from all products
-  products.forEach(p=>{if(p.cats)p.cats=p.cats.filter(c=>c!==cat);});
-  categories.splice(idx,1);
-  persist();
-  renderCategoryManagePage();
-  renderProducts();
+  if(count>0){alert(`「${cat}」仍有 ${count} 件商品，請先將商品移到其他分類再刪除。`);return;}
+  if(!confirm(`確定刪除空分類「${cat}」？`))return;
+  const categoryId=ensureCategoryId(cat);
+  const {data,error}=await sbClient.functions.invoke('admin-catalog',{body:{action:'delete-category',accessToken:supplierAccessToken,categoryId}});
+  if(error||data?.error){alert(`分類刪除失敗：${data?.error||'請稍後再試'}`);return;}
+  categories.splice(idx,1);delete categoryIdentity[cat];
+  localStorage.setItem('cp_categories',JSON.stringify(categories));
+  localStorage.setItem('cp_category_identity',JSON.stringify(categoryIdentity));
+  renderCategoryManagePage();renderProducts();
 }
 function saveCategoriesPage(){
   persist();
@@ -1943,6 +1920,7 @@ async function saveProduct(){
       note:document.getElementById('p-note').value.trim(),
       img:finalImg, foreignPrices, channelPrices,
       cats:[...currentCats],
+      categoryIds:currentCats.map(ensureCategoryId),
       stock: document.getElementById('p-stock').value!=='' ? parseInt(document.getElementById('p-stock').value) : null,
       stockLow: document.getElementById('p-stock-override').checked || false};
     if(editingId) products[products.findIndex(p=>p.id===editingId)]=d;
@@ -1966,12 +1944,10 @@ async function saveProduct(){
 }
 async function delProduct(id){
   if(!confirm('確定刪除？'))return;
+  const {data,error}=await sbClient.functions.invoke('admin-catalog',{body:{action:'delete-product',accessToken:supplierAccessToken,productId:id}});
+  if(error||data?.error){alert(`商品刪除失敗：${data?.error||'請稍後再試'}`);return;}
   products=products.filter(p=>p.id!==id);
-  // Delete from Supabase
-  try{ await sbFetch('DELETE','sl_products','',`?id=eq.${id}`); }
-  catch(e){ console.warn('Delete sync failed',e); }
-  await persist();
-  renderProducts();
+  localStorage.setItem('cp_products',JSON.stringify(products));renderProducts();
 }
 
 // ── SETTINGS ──
@@ -4004,6 +3980,7 @@ async function runBatchUpload(){
 
       const catsRaw = getVal(row, colMap.cats);
       const cats = catsRaw ? catsRaw.split(/[,，、]/).map(s=>s.trim()).filter(Boolean) : [];
+      cats.forEach(cat=>{if(!categories.includes(cat))categories.push(cat);ensureCategoryId(cat);});
 
       const foreignPrices = {};
       Object.entries(currCols).forEach(([code, keys])=>{
@@ -4031,6 +4008,7 @@ async function runBatchUpload(){
         note:     getVal(row, colMap.note),
         img:      imgUrl,
         cats,
+        categoryIds:cats.map(ensureCategoryId),
         stock:    getVal(row, colMap.stock)?parseInt(getVal(row, colMap.stock)):null,
         stockLow: false,
         foreignPrices,
@@ -4084,6 +4062,77 @@ async function runBatchUpload(){
     resultEl.innerHTML='❌ 上傳失敗：'+e.message;
     console.error(e);
   }
+}
+
+// ── POS CATALOG & DEVICE PAIRING ──
+function buildPosCatalog(){
+  categories.forEach(ensureCategoryId);
+  const knownIds=new Set(categories.map(ensureCategoryId));
+  const catalogProducts=products.map(product=>{
+    const ids=(product.categoryIds?.length?product.categoryIds:syncProductCategoryIds(product)).map(String);
+    const categoryId=ids.find(id=>knownIds.has(id));
+    if(!categoryId)throw new Error(`商品「${product.name||product.id}」沒有有效的永久分類 ID`);
+    const barcode=String(product.barcode||'');
+    return {
+      id:String(product.id),sku:barcode,barcode,name:String(product.name||''),categoryId,
+      price:Number(product.price||0),cost:0,stock:Number(product.stock||0),
+      photo:product.img||'',color:'#d9c0a7'
+    };
+  });
+  return {
+    schema:'severus-pos-catalog',version:1,generatedAt:new Date().toISOString(),
+    categories:categories.map((name,index)=>({id:ensureCategoryId(name),name,order:index+1,color:'#d9c0a7'})),
+    products:catalogProducts,promotions:[],gifts:[],payments:[]
+  };
+}
+function downloadPosCatalog(){
+  if(!supplierAccessToken){alert('請先登入管理員後台');return;}
+  try{
+    const catalog=buildPosCatalog();
+    const blob=new Blob([JSON.stringify(catalog,null,2)],{type:'application/json'}),link=document.createElement('a');
+    link.href=URL.createObjectURL(blob);link.download=`severus-pos-catalog-${new Date().toLocaleDateString('en-CA')}.json`;
+    link.click();setTimeout(()=>URL.revokeObjectURL(link.href),1000);
+    showToast('✅ POS 商品目錄已下載；成本欄位尚未設定，目前統一輸出 0');
+  }catch(error){alert(`POS 商品目錄無法匯出：${error.message||error}`);}
+}
+function closePosDeviceModal(){document.getElementById('pos-device-modal')?.classList.add('hidden');}
+async function openPosDeviceModal(){
+  if(!supplierAccessToken){alert('請先登入管理員後台');return;}
+  document.getElementById('pos-device-modal').classList.remove('hidden');
+  document.getElementById('pos-pairing-result').style.display='none';
+  await loadPosDevices();
+}
+async function callPosDevice(action,extra={}){
+  const {data,error}=await sbClient.functions.invoke('pos-device',{body:{action,accessToken:supplierAccessToken,...extra}});
+  if(error||data?.error)throw new Error(data?.error||'POS 裝置操作失敗');
+  return data;
+}
+async function createPosPairingCode(button){
+  const original=button.textContent;button.disabled=true;button.textContent='產生中…';
+  try{
+    const data=await callPosDevice('create-pairing'),box=document.getElementById('pos-pairing-result');
+    box.style.display='block';
+    box.innerHTML=`<strong style="font-family:var(--mono);font-size:20px;letter-spacing:2px;">${x(data.pairingCode)}</strong><div style="font-size:11px;color:var(--muted);margin-top:3px;">僅顯示這一次，約 10 分鐘內有效</div>`;
+  }catch(error){alert(error.message);}finally{button.disabled=false;button.textContent=original;}
+}
+async function loadPosDevices(){
+  const box=document.getElementById('pos-device-list');box.innerHTML='<div class="empty-state"><p>載入中…</p></div>';
+  try{
+    const data=await callPosDevice('list'),devices=data.devices||[];
+    if(!devices.length){box.innerHTML='<div class="empty-state"><p>尚未配對任何 POS 裝置</p></div>';return;}
+    box.innerHTML=devices.map(device=>{
+      const revoked=!!device.revoked_at,expired=new Date(device.expires_at).getTime()<=Date.now(),active=!revoked&&!expired;
+      return `<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px;border-bottom:1px solid var(--border);">
+        <div><strong>${x(device.name||'SEVERUS LIAN iPad POS')}</strong><div style="font-size:11px;color:var(--muted);">權限：catalog:read・${active?'有效至 '+new Date(device.expires_at).toLocaleDateString():(revoked?'已撤銷':'已過期')}</div></div>
+        ${active?`<button class="btn btn-sm btn-danger" onclick="revokePosDevice('${x(device.id)}')">撤銷</button>`:'<span style="font-size:12px;color:var(--hint);">停用</span>'}
+      </div>`;
+    }).join('');
+  }catch(error){box.innerHTML=`<div class="empty-state"><p>${x(error.message)}</p></div>`;}
+}
+async function revokePosDevice(deviceId){
+  if(!confirm('確定撤銷這台 POS 的商品目錄讀取權限？'))return;
+  try{await callPosDevice('revoke',{deviceId});await loadPosDevices();showToast('✅ POS 裝置已撤銷');}
+  catch(error){alert(error.message);}
 }
 </script>
 <script>
