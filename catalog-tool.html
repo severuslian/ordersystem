@@ -634,7 +634,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
             <div class="barcode-status" id="p-barcode-status"></div>
           </div>
         </div>
-        <div class="form-group"><label class="form-label">台幣定價（TWD）*</label><input class="form-input" id="p-price" type="number" placeholder="0"></div>
+        <div class="form-group"><label class="form-label">台幣定價（TWD）*</label><input class="form-input" id="p-price" type="number" min="0" step="1" placeholder="0"></div>
+        <div class="form-group"><label class="form-label">商品成本（TWD）</label><input class="form-input" id="p-cost" type="number" min="0" step="1" placeholder="0"></div>
         <div class="form-group"><label class="form-label">尺寸</label><input class="form-input" id="p-size" placeholder="30×20×10 cm"></div>
         <div class="form-group"><label class="form-label">材質</label><input class="form-input" id="p-material" placeholder="100% 棉"></div>
         <div class="form-group"><label class="form-label">顏色 / 款式</label><input class="form-input" id="p-color" placeholder="米白、深藍"></div>
@@ -1154,7 +1155,7 @@ async function persistNow(){
     const categoryRows=categories.map((name,index)=>({id:ensureCategoryId(name),name,sort_order:index}));
     const productRows=products.map((p,index)=>({
       id:String(p.id),name:p.name||'',name_en:p.nameEn||null,barcode:p.barcode||'',
-      price:parseFloat(p.price)||0,size:p.size||null,material:p.material||null,color:p.color||null,
+      price:parseFloat(p.price)||0,cost:parseFloat(p.cost)||0,size:p.size||null,material:p.material||null,color:p.color||null,
       weight:p.weight?parseFloat(p.weight):null,note:p.note||null,img:p.img||null,
       foreign_prices:p.foreignPrices||{},channel_prices:p.channelPrices||{},
       category_ids:syncProductCategoryIds(p),stock:p.stock!=null?parseInt(p.stock):null,
@@ -1193,7 +1194,7 @@ async function loadFromSupabase(accessToken=''){
       return name;
     }).filter(Boolean);
     products=catalogData.products.map(p=>({
-      id:p.id,name:p.name,nameEn:p.name_en||'',barcode:p.barcode||'',price:p.price||0,
+      id:p.id,name:p.name,nameEn:p.name_en||'',barcode:p.barcode||'',price:p.price||0,cost:p.cost||0,
       size:p.size||'',material:p.material||'',color:p.color||'',weight:p.weight||'',note:p.note||'',
       img:p.img||null,foreignPrices:p.foreign_prices||{},channelPrices:p.channel_prices||{},
       cats:p.cats||[],categoryIds:(p.category_ids||[]).map(String),stock:p.stock,stockLow:p.stock_low||false
@@ -1780,7 +1781,7 @@ function openPModal(id){
   const pdata=id?products.find(p=>p.id===id):{};
   document.getElementById('p-name').value=pdata.name||'';
   document.getElementById('p-name-en').value=pdata.nameEn||'';
-  ['barcode','price','size','material','color','weight','note'].forEach(f=>{
+  ['barcode','price','cost','size','material','color','weight','note'].forEach(f=>{
     document.getElementById('p-'+f).value=pdata[f]||'';});
   if(id) currentImg=products.find(p=>p.id===id).img||null;
   document.getElementById('img-prev').style.display=currentImg?'':'none';
@@ -1913,6 +1914,7 @@ async function saveProduct(){
       nameEn:document.getElementById('p-name-en').value.trim(),
       barcode,
       price:document.getElementById('p-price').value,
+      cost:document.getElementById('p-cost').value,
       size:document.getElementById('p-size').value.trim(),
       material:document.getElementById('p-material').value.trim(),
       color:document.getElementById('p-color').value.trim(),
@@ -3792,6 +3794,7 @@ function downloadBatchTemplate(){
     'English Name',
     '條碼/SKU',
     '台幣定價*',
+    '商品成本',
     '尺寸',
     '材質',
     '顏色/款式',
@@ -3812,6 +3815,7 @@ function downloadBatchTemplate(){
     'Cotton Linen Tote Bag',
     'SL-BAG-001',
     480,
+    180,
     '35×12×30 cm',
     '100% 棉麻',
     '米白',
@@ -3942,6 +3946,7 @@ async function runBatchUpload(){
       nameEn:   ['English Name','英文名稱','name_en'],
       barcode:  ['條碼/SKU','條碼','SKU','barcode'],
       price:    ['台幣定價*','台幣定價','price','Price'],
+      cost:     ['商品成本','成本','cost','Cost'],
       size:     ['尺寸','Size','size'],
       material: ['材質','Material','material'],
       color:    ['顏色/款式','顏色','Color','color'],
@@ -4001,6 +4006,7 @@ async function runBatchUpload(){
         nameEn:   getVal(row, colMap.nameEn),
         barcode:  getVal(row, colMap.barcode),
         price:    getVal(row, colMap.price)||0,
+        cost:     getVal(row, colMap.cost)||0,
         size:     getVal(row, colMap.size),
         material: getVal(row, colMap.material),
         color:    getVal(row, colMap.color),
@@ -4075,7 +4081,7 @@ function buildPosCatalog(){
     const barcode=String(product.barcode||'');
     return {
       id:String(product.id),sku:barcode,barcode,name:String(product.name||''),categoryId,
-      price:Number(product.price||0),cost:0,stock:Number(product.stock||0),
+      price:Number(product.price||0),cost:Number(product.cost||0),stock:Number(product.stock||0),
       photo:product.img||'',color:'#d9c0a7'
     };
   });
@@ -4092,7 +4098,7 @@ function downloadPosCatalog(){
     const blob=new Blob([JSON.stringify(catalog,null,2)],{type:'application/json'}),link=document.createElement('a');
     link.href=URL.createObjectURL(blob);link.download=`severus-pos-catalog-${new Date().toLocaleDateString('en-CA')}.json`;
     link.click();setTimeout(()=>URL.revokeObjectURL(link.href),1000);
-    showToast('✅ POS 商品目錄已下載；成本欄位尚未設定，目前統一輸出 0');
+    showToast('✅ POS 商品目錄已下載；已包含後台定價、成本與庫存');
   }catch(error){alert(`POS 商品目錄無法匯出：${error.message||error}`);}
 }
 function closePosDeviceModal(){document.getElementById('pos-device-modal')?.classList.add('hidden');}
